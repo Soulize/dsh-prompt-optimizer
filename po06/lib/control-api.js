@@ -25,8 +25,19 @@ export const API_PREFIX = '/po06/api'
 export const WRITE_HEADER = 'x-po06'
 /** 启动闸门自己的顶层字段：它们不是"设置"，但**也不是**不认识的字段（见 /status 的处理）。 */
 export const GATE_KEYS = Object.freeze(['settingsVersion', 'enabled', 'rollout'])
-/** 请求体上限：设置/指令都很小；给足了也不会被巨体打爆。 */
-export const MAX_BODY_BYTES = 64 * 1024
+/**
+ * 请求体上限。
+ *
+ * ⚠ 2026-09-26 修正（用户实测：几万字原文必然失败，且报错显示成"连不上宿主服务"）：
+ * 原先取 64KB，注释里的理由是「设置/指令都很小」——**这个前提是错的**：
+ * 本模块的 readBody 不只服务设置端点，interpret 端点的 body 里装的是用户原文，
+ * 而原文可以很长（实测 39123 字）。中文一字 3 字节 ⇒ 64KB ÷ 3 ≈ **21800 字**，
+ * 超过就撞墙，用户看到的是"优化失败"。
+ *
+ * 现在取 2MB：约合 66 万汉字原文，对"人写的提示词"绰绰有余，
+ * 同时仍能挡住真正的巨体（比如误发的二进制）。
+ */
+export const MAX_BODY_BYTES = 2 * 1024 * 1024
 
 /** `authority`（Host 头的值，可能带端口）是不是 loopback。纯函数。 */
 export function isLoopbackAuthority(authority) {
@@ -266,7 +277,13 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
     const chunks = []
     req.on('data', (c) => {
       size += c.length
-      if (size > MAX_BODY_BYTES) { resolve({ ok: false, reason: 'body-too-large' }); try { req.destroy() } catch { /* best effort */ } return }
+      // ⚠ 2026-09-26：超限**不要** destroy。原先这里直接销毁连接，浏览器看到的是
+      // 「连接断开」而不是 HTTP 错误，client 便把它归成 unreachable、显示
+      // 「连不上宿主服务（它可能刚重启）」——真因（请求体过大）被彻底盖掉，
+      // 用户实测「几万字提示词必然失败」时看到的就是这句误导信息。
+      // 现在只如实返回，由各调用方按既有约定回 400 + reason，界面能显示真正的原因。
+      // 另外**不再继续累积 chunks**（下面 return 之前不再 push），避免巨体白占内存。
+      if (size > MAX_BODY_BYTES) { resolve({ ok: false, reason: 'body-too-large', gotBytes: size, limitBytes: MAX_BODY_BYTES }); return }
       chunks.push(c)
     })
     req.on('end', () => {
