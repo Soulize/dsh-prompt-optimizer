@@ -33,7 +33,8 @@ process.on('exit', () => { for (const d of DIRS) { try { rmSync(d, { recursive: 
  *  fixture 必须走真实路径，不能因为图省事用三位数而测了个空。 */
 const RC = { tests: { 'x.test.mjs': { pass: 100 } }, mutation: { total: 50 } }
 /** 真实台账（fixture 默认用它：被复制的检查器脚本自己就引用了十几个真实编号）。 */
-const REAL_EVIDENCE = readFileSync(join(HERE, '..', '..', 'EVIDENCE.md'), 'utf8')
+// 真实台账现在在 docs/ 下（2026-09-26 文档整理）
+const REAL_EVIDENCE = readFileSync(join(HERE, '..', '..', 'docs', 'EVIDENCE.md'), 'utf8')
 /**
  * 用来测"悬空引用会被抓"的假编号——**必须拼接出来，不能写字面量**（EV-0128）：
  * 引文检查会扫全仓（含测试源码），写死的假编号会**被它自己抓到**（实测抓到过）。
@@ -67,7 +68,9 @@ function run(over = {}) {
   // 注释里就引用了十几个真实编号，用一份"只有一条"的假台账会把它们全报成悬空
   // （第一版 fixture 就是这么错的——**错在 fixture，不在检查器**）。
   if (over.evidence !== null) {
-    writeFileSync(join(repo, 'EVIDENCE.md'), over.evidence ?? REAL_EVIDENCE, 'utf8')
+    // 桩仓库也要有 docs/ 目录：检查器现在按 docs/EVIDENCE.md 找它
+    mkdirSync(join(repo, 'docs'), { recursive: true })
+    writeFileSync(join(repo, 'docs', 'EVIDENCE.md'), over.evidence ?? REAL_EVIDENCE, 'utf8')
   }
   if (over.extraFile) writeFileSync(join(repo, over.extraFile.name), over.extraFile.text, 'utf8')
 

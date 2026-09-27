@@ -220,7 +220,8 @@ for (const doc of POINTER_DOCS) {
 const citationFindings = []
 /** 引文检查实际扫过多少个文件——**0 表示这个检查什么都没看**（不许再冒充通过）。 */
 let CITATION_SCANNED = 0
-const evPath = join(REPO, 'EVIDENCE.md')
+// ⚠ 2026-09-26：EVIDENCE.md 已随文档整理移入 docs/（仓库根只留对外门面）。
+const evPath = join(REPO, 'docs', 'EVIDENCE.md')
 if (existsSync(evPath)) {
   const evText = readFileSync(evPath, 'utf8')
   const defined = new Set([...evText.matchAll(/^#+\s*(EV-\d{4})/gm)].map((m) => m[1]))

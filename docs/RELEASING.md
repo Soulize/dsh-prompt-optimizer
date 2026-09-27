@@ -55,6 +55,17 @@ node --test test/            # 或逐套跑：node test/xxx.test.mjs
 
 `README.md` 里凡是出现版本号、安装命令、Release 链接的地方，全部指向**本次要发的版本**。
 
+**同时核对所有相对链接**（2026-09-26 补：整理 `docs/` 时发现 README 指向 `README-0.5.md`，
+而该文件早已随 0.5 源码移入 `old/0.5/`——**链接坏了一轮都没人发现**）。
+移动/重命名任何文件之后，必须扫一遍引用它的人：
+
+```bash
+# 列出 README 里的全部相对链接，逐个确认文件还在
+grep -o ']([^)]*\.\(md\|json\|yml\)[^)]*)' README.md docs/*.md
+```
+
+**核对**：上面命令列出的每一个路径都能在仓库里找到（不存在就是断链，当场修）。
+
 **核对**：在 README 里搜旧版本号，应当**搜不到**（除历史说明章节外）。
 
 ### 步骤 4 · 跑全量回归
@@ -127,6 +138,7 @@ node po06-beta/make-release.mjs
 [ ] 1  po06/package.json 的 version 已改
 [ ] 2  CHANGELOG.md 顶部有对应一节
 [ ] 3  README 里旧版本号已全部替换（搜过）
+[ ] 3b README / docs 里的**相对链接逐个确认文件存在**（移动过文件时尤其重要）
 [ ] 4  49 套测试全绿
 [ ] 5  npm pack 产物里 name/version/main 正确、runtime 与 patch 都在
 [ ] 6  已提交，工作树干净，且**推的是 main**
