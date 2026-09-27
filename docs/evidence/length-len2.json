@@ -1,0 +1,160 @@
+{
+  "label": "len2",
+  "at": "2026-09-14T15:18:55.853Z",
+  "filter": [
+    "H4-vague",
+    "L1-typo",
+    "L2-rename",
+    "L3-clean",
+    "M1-ratelimit"
+  ],
+  "cases": [
+    {
+      "id": "L1-typo",
+      "tier": "advanced",
+      "truth": "轻",
+      "accept": [
+        "轻"
+      ],
+      "text": "把 README.md 里的错别字改掉，别的别动。",
+      "predicted": "中",
+      "via": "keyword-todo",
+      "correct": false,
+      "dangerLight": false,
+      "underLight": false,
+      "overProcess": true,
+      "needConfirm": false,
+      "confirmOk": null,
+      "chars": 644,
+      "wallMs": 13223,
+      "usage": {
+        "inputTokens": 765,
+        "outputTokens": 2294,
+        "totalTokens": 3571,
+        "cacheReadTokens": 512,
+        "reasoningTokens": 1852
+      },
+      "output": "只动 README.md 一个文件，其他一律不碰。\n\n先列 3~6 条 todo，按顺序做，做完逐条勾掉：\n1. 通读 README.md，逐处列出错别字，每处给出所在原文片段和更正后的文字。\n2. 只对第 1 步列出的错别字做逐字更正。\n3. 通读改后全文，对照第 1 步清单，确认除错别字外没有任何其他改动。\n\n必须做：只把 README.md 里确认是错别字的字改对；改完给出逐处「原文 → 改后」对照，并逐处说明该处只是错别字更正。\n\n不得做：不得改 README.md 里错别字以外的任何字符，包括标点、空格、换行、大小写、格式、链接、图片、代码块、行内代码、命令、文件路径、字段名、专有名词；不得顺手调整措辞、语序或\"优化\"表达；不得新建、删除、重命名文件，不得改动其他任何文件。若发现某处\"错别字\"出现在代码块、行内代码、命令、链接 URL、文件路径或专有名词里，不得修改。\n\n存疑处置：某处是否算错别字判断不了（专有名词、外来词、缩写、项目自造词等），保留原样，不得自行改动，把该处位置和原文列出，先向我确认后再动。\n\n完成判据：README.md 中错别字已全部更正，且除错别字所在字词外，文件其余内容保持原样。\n\n验证：改完后逐条核对「原文 → 改后」对照，确认每处改动都落在错别字上；同时确认文件其余部分与改动前一致。若发现任何一处改动不属于错别字更正，立即改回原样，不得保留。\n\n交付：报出改了哪几处、每处的原文与改后文字；有保留未改的存疑处，一并列出位置与原文。"
+    },
+    {
+      "id": "L2-rename",
+      "tier": "advanced",
+      "truth": "轻",
+      "accept": [
+        "轻"
+      ],
+      "text": "把导航栏上的标题从\"首页\"改成\"主页\"。",
+      "predicted": "轻",
+      "via": "keyword-light",
+      "correct": true,
+      "dangerLight": false,
+      "underLight": false,
+      "overProcess": false,
+      "needConfirm": false,
+      "confirmOk": null,
+      "chars": 489,
+      "wallMs": 6097,
+      "usage": {
+        "inputTokens": 251,
+        "outputTokens": 968,
+        "totalTokens": 2243,
+        "cacheReadTokens": 1024,
+        "reasoningTokens": 665
+      },
+      "output": "把导航栏上的标题从\"首页\"改成\"主页\"。\n\n先全文检索\"首页\"，定位导航栏标题这一处的来源文件与确切写法，再动手改。改的时候注意：\n\n- 必须只改导航栏这一处标题文案，目标值就是\"主页\"。\n- 不得改动页面其它位置出现的\"首页\"（如链接文字、面包屑、浏览器标题、按钮等），除非它与导航栏标题是同一处文案来源。\n- 如果该文案来自 i18n 资源、常量文件或配置，必须改源头的那条值，不得在组件里写死覆盖。\n- 若检索到的\"首页\"出现在多处且无法判断哪一处对应导航栏标题，先停下来报告你找到的位置和我确认，不要自行挑一处改。\n- 不得顺手改导航栏的其它项、其它文案，不得改样式、不得格式化或重构文件。\n\n交付判据：导航栏上原显示\"首页\"的位置显示为\"主页\"；除该处外，代码里原有的\"首页\"文案一处未变。\n\n验证动作：改动后重新检索\"首页\"和\"主页\"，确认改动落在预期的那一处、其余未变；再按项目现有的启动或预览方式打开界面，肉眼确认导航栏显示为\"主页\"。启动方式不明确时，先查项目里已有的启动脚本，按其说明执行。\n\n直接改完跑上述验证即可；不要建 goal/todo、不要写计划。"
+    },
+    {
+      "id": "L3-clean",
+      "tier": "advanced",
+      "truth": "中",
+      "accept": [
+        "中"
+      ],
+      "text": "把项目里所有 console.log 删掉，ESLint 警告清零。",
+      "predicted": "中",
+      "via": "keyword-todo",
+      "correct": true,
+      "dangerLight": false,
+      "underLight": false,
+      "overProcess": false,
+      "needConfirm": false,
+      "confirmOk": null,
+      "chars": 909,
+      "wallMs": 26327,
+      "usage": {
+        "inputTokens": 254,
+        "outputTokens": 4765,
+        "totalTokens": 6043,
+        "cacheReadTokens": 1024,
+        "reasoningTokens": 4318
+      },
+      "output": "先列 3~6 条 todo，按顺序做，做完逐条勾掉。\n\n1. 动手前先查清本项目的 lint 命令和 lint 扫描范围，从项目现有脚本/配置中读取；确认 ESLint 配置里是否已有禁止 console 的规则。不得新增依赖，不得修改 ESLint 配置、规则等级、忽略文件或扫描范围。\n2. 删除项目自己维护的源码中所有实际调用 console.log(...) 的位置。不得删除 console.error、console.warn、console.info；不得删除出现在字符串、模板字符串、注释、正则、文档、测试期望值里的 console.log 文本；不得改动依赖目录、构建产物、生成文件、缓存目录。若发现 console.log 被赋值给变量或作为参数传递，先停下来报告，不要自行删除。若 lint 配置不覆盖全部源码，必须另用搜索确认全项目源码中的 console.log 调用。\n3. 处理 ESLint 输出的所有 warning，直到运行项目的 lint 命令后输出中 warning 数为 0。不得通过加 eslint-disable、关闭规则、修改配置、排除文件来把 warning 数压到 0。消除警告只做必要的最小改动；若某条 warning 必须改变对外接口或运行行为才能消除，先停下来报告，不要自行改。若使用自动修复，只允许处理 warning 对应规则，并在修复后逐项复查差异，非 warning 相关改动必须回退。\n4. 完成判据：运行项目的 lint 命令，输出中 warning 数为 0；同时在项目源码内搜索 console.log( 调用，结果为 0。若 lint 命令还有 error，必须把 error 清单和未完成原因一起报告，不得声称已完成。\n5. 改动后复查本次全部差异，确认每处改动都只对应删除 console.log 调用或消除 ESLint warning；出现无关改动必须回退。若没有可用的差异查看方式，必须说明并停下来让我确认。\n\n如果实际要求是连字符串、注释、文档里的 console.log 文本也一并删除，先停下来向我确认，不要自行扩大删除范围。"
+    },
+    {
+      "id": "M1-ratelimit",
+      "tier": "advanced",
+      "truth": "中",
+      "accept": [
+        "中",
+        "重"
+      ],
+      "text": "给登录接口加上请求频率限制。",
+      "predicted": "中",
+      "via": "keyword-todo",
+      "correct": true,
+      "dangerLight": false,
+      "underLight": false,
+      "overProcess": false,
+      "needConfirm": false,
+      "confirmOk": null,
+      "chars": 533,
+      "wallMs": 12145,
+      "usage": {
+        "inputTokens": 245,
+        "outputTokens": 1907,
+        "totalTokens": 3176,
+        "cacheReadTokens": 1024,
+        "reasoningTokens": 1577
+      },
+      "output": "给登录接口加上请求频率限制。\n\n先查证，不得推测：\n- 在仓库里定位登录接口的实现位置（路由定义与处理函数），读项目现有依赖清单，确认仓库中是否已有可用的限流/缓存依赖或已配置的存储客户端。读到什么用什么。\n- 不得引入仓库里没有的依赖、中间件或外部存储服务。\n\n动手前必须先向我确认以下三项，确认前不得写实现代码：\n- 按什么维度限流（来源 IP / 登录账号 / 两者组合）\n- 阈值与时间窗（多少次请求、多长时间）\n- 超限时返回的状态码与响应体\n\n实现要求：\n- 限流只作用于登录接口；其它接口的行为与响应不得改变。\n- 登录的认证逻辑与成功/失败响应格式不得改动。\n- 阈值内请求的行为必须与改动前完全一致。\n- 若查证后发现无法确定登录接口位置，或限流所需存储不可用，停下来报告，不得自选方案。\n\n完成判据：对同一限流维度连续发起超过阈值的登录请求，从第（阈值+1）次起被拒绝并返回已确认的超限响应；过一个时间窗后同一维度能再次正常登录。\n\n验证动作：按项目现有方式在本地启动服务，实际连续请求登录接口验证上述行为；若项目已有测试框架，补一条覆盖\"阈值内通过、超限被拒、窗口过后恢复\"的测试并跑通。\n\n先列 3~6 条 todo，按顺序做，做完逐条勾掉。"
+    },
+    {
+      "id": "H4-vague",
+      "tier": "advanced",
+      "truth": "重",
+      "accept": [
+        "中",
+        "重"
+      ],
+      "text": "把那个模块重写一下。",
+      "predicted": "重",
+      "via": "keyword-goal",
+      "correct": true,
+      "dangerLight": false,
+      "underLight": false,
+      "overProcess": false,
+      "needConfirm": true,
+      "confirmOk": true,
+      "chars": 549,
+      "wallMs": 10122,
+      "usage": {
+        "inputTokens": 244,
+        "outputTokens": 1640,
+        "totalTokens": 2908,
+        "cacheReadTokens": 1024,
+        "reasoningTokens": 1302
+      },
+      "output": "先建立 goal：把\"那个模块\"重写为同接口、同行为的新实现（验收：项目现有测试全部通过，调用方代码一行不改仍能编译并通过调用）。\n\n分两个阶段推进，每阶段先验证再进下一阶段：\n\n阶段一：定对象、定目标\n- 在当前工作区与最近上下文里定位\"那个模块\"对应的具体文件或目录，写出完整路径。\n- 候选不唯一、或找不到对应物时，停下来向我确认，不得自行挑一个开始改。\n- 写出：保留哪些对外接口、哪些行为必须不变、哪些行为需要改变。目标行为没写清之前，不得改任何代码。\n- 完成判据：路径 + 目标行为 + 验收判据三条齐备，并已向我确认。\n\n阶段二：重写并验证\n- 只改阶段一确认的路径范围内的文件。\n- 保留该模块现有对外接口：导出名、函数签名、参数与返回结构、事件或回调名称不变。若与调用方不兼容，停下来报告，不要自行改接口。\n- 不得删除、跳过、改弱现有测试来让测试通过；不得新增依赖；不得擅自扩大或缩小重写范围。\n- 验证动作：读项目里现有的 README、构建或包管理清单，确认该项目既有的测试与构建入口，跑通它；命令以文件里实际写的为准，不得凭空猜。\n- 完成判据：既有测试全部通过，且调用方代码零改动即可编译并通过调用。\n\n任一环节与我确认的内容对不上，停下来报告，不要按自己的判断继续。"
+    }
+  ],
+  "stats": {
+    "cases": 5,
+    "correct": 4,
+    "accuracy": 0.8,
+    "dangerLight": 0,
+    "underLight": 0,
+    "overProcess": 1,
+    "undecided": 0,
+    "confirmMissing": 0
+  }
+}

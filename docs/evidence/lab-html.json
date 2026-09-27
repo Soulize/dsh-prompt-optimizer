@@ -1,0 +1,381 @@
+{
+ "builtAt": "2026-09-15T14:03:44.098Z",
+ "kind": "html-artifact",
+ "artifact": {
+  "interface": "\n交付物（必须满足，否则视为未完成）：\n1) **单个 HTML 文件**（无构建、无本地依赖；可用 CDN 引入 three.js）；\n2) 文件内必须定义纯函数 `buildGeometry()`，返回 `{positions:[[x,y,z],...], indices:[...]}`（几何构造不得依赖 WebGL，以便自动化验证）；\n3) 必须定义 `window.__selftest()`，返回 JSON：`{facesOutwardRatio, inwardFaces, faces, side, cullBackFaces, controls:{move,turn,turret,exitCapture,sensitivity,invertY}}`；\n4) 外观面必须朝外（该看见的面看得见、不该看见的看不见）；\n5) 操控：W/S 前后、A/D 转向、鼠标转炮塔、Esc 退出鼠标捕获，并可在界面上调灵敏度与反转 Y 轴，附操作提示。\n6) 若题目要求\"修复反向面\"，`__selftest()` 还必须额外返回 `brokenFacesBefore`（修复前检测到的反向面数）与 `inwardFaces`（修复后仍存在的反向面数，应为 0）。",
+  "verifier": "html-verify.cjs",
+  "outDir": "artifacts"
+ },
+ "scoring": {
+  "levels": [
+   "0 缺失",
+   "1 模糊提及",
+   "2 可判定要求",
+   "3 可判定要求 + 验证/回归/边界"
+  ],
+  "perCriterionMax": 3,
+  "perTaskMax": 18,
+  "suiteMax": 54,
+  "lines": {
+   "pass": 0.6,
+   "target": 0.83,
+   "full": 1
+  }
+ },
+ "solverSystem": "你是执行型 AI。下面是一条来自用户的指令：直接照它执行并给出结果。\n本题的交付物是一个**完整的单文件 HTML**。请只输出该 HTML 文件的内容本身（从 <!doctype html> 开始到 </html> 结束），\n不要任何解释、不要 Markdown 代码围栏、不要省略号。必须实现指令里要求的 buildGeometry() 与 window.__selftest()。\n重要（测量环境约束）：你**没有**任何工具——不能读文件、不能执行命令、不能访问网络。\n因此不要输出\"先查证/先侦察/先列 todo 再执行\"这类计划或工具调用；**直接产出完整的单文件 HTML**（题目已给出所需的一切）。",
+ "judgeSystem": "你是严格的评分员。给你一道题、交给执行 AI 的指令、以及执行 AI 的回答。\n对每条要点打 0 / 1 / 2 / 3：0＝完全没提；1＝提到了但不可判定；2＝给出明确、可判定的要求；3＝在 2 的基础上还要求了验证证据、回归或边界处理。\n只输出 JSON：{\"points\":[...],\"total\":N,\"max\":M,\"note\":\"...\"}。不要因为指令写得长而加分。",
+ "tasks": [
+  {
+   "id": "H1-tank-box-normals",
+   "kind": "单文件 3D 产物·法线与可见面",
+   "prompt": "给我一个单文件 HTML：打开就能看到一个坦克车体盒子，能从外面正常看见它的各个面。另外我要能自动化验收（我没法每次都手点）：文件里请暴露一个纯函数 buildGeometry()（返回 {positions, indices}），并把 window.__selftest() 挂到全局，返回 JSON：{facesOutwardRatio, inwardFaces, faces, side, cullBackFaces, controls:{move,turn,turret,exitCapture,sensitivity,invertY}}。如果是\"修反向面\"这类任务，__selftest() 还要给出修复前的反向面数 brokenFacesBefore 与修复后的 inwardFaces。",
+   "criteria": [
+    {
+     "zh": "要求单文件 HTML 且给出打开方式",
+     "tiers": [
+      [
+       "html"
+      ],
+      [
+       "单文件",
+       "直接打开",
+       "无构建"
+      ],
+      [
+       "验收",
+       "可运行",
+       "截图"
+      ]
+     ]
+    },
+    {
+     "zh": "要求几何与渲染解耦（buildGeometry 纯函数）",
+     "tiers": [
+      [
+       "函数"
+      ],
+      [
+       "buildGeometry",
+       "几何构造",
+       "纯函数",
+       "不依赖 WebGL"
+      ],
+      [
+       "可自动化验证",
+       "自检"
+      ]
+     ]
+    },
+    {
+     "zh": "要求自检接口（__selftest 返回法线与可见性数据）",
+     "tiers": [
+      [
+       "自检"
+      ],
+      [
+       "__selftest",
+       "返回 JSON",
+       "facesOutwardRatio"
+      ],
+      [
+       "逐项",
+       "断言"
+      ]
+     ]
+    },
+    {
+     "zh": "法线朝向正确（外观面朝外、无内向面）",
+     "tiers": [
+      [
+       "法线"
+      ],
+      [
+       "朝外",
+       "统一朝向",
+       "无内向面",
+       "绕序",
+       "winding"
+      ],
+      [
+       "验证",
+       "比例",
+       "审计"
+      ]
+     ]
+    },
+    {
+     "zh": "可见性策略明确（正面渲染/背面剔除，或双面并说明代价）",
+     "tiers": [
+      [
+       "可见"
+      ],
+      [
+       "FrontSide",
+       "背面剔除",
+       "DoubleSide",
+       "cull"
+      ],
+      [
+       "对照",
+       "开关对比"
+      ]
+     ]
+    },
+    {
+     "zh": "判定标准与证据（什么算做对了）",
+     "tiers": [
+      [
+       "测试"
+      ],
+      [
+       "判定标准",
+       "比例阈值",
+       "截图"
+      ],
+      [
+       "逐条",
+       "报告"
+      ]
+     ]
+    }
+   ],
+   "promptHasInterface": true
+  },
+  {
+   "id": "H2-tank-controls",
+   "kind": "单文件 3D 产物·操控人性化",
+   "prompt": "给我一个单文件 HTML：能开这个坦克盒子，操作要顺手，别让人不知道怎么玩。另外我要能自动化验收（我没法每次都手点）：文件里请暴露一个纯函数 buildGeometry()（返回 {positions, indices}），并把 window.__selftest() 挂到全局，返回 JSON：{facesOutwardRatio, inwardFaces, faces, side, cullBackFaces, controls:{move,turn,turret,exitCapture,sensitivity,invertY}}。如果是\"修反向面\"这类任务，__selftest() 还要给出修复前的反向面数 brokenFacesBefore 与修复后的 inwardFaces。",
+   "criteria": [
+    {
+     "zh": "输入映射成表（移动/转向/炮塔/退出）",
+     "tiers": [
+      [
+       "按键"
+      ],
+      [
+       "W/S",
+       "A/D",
+       "鼠标",
+       "映射",
+       "键位"
+      ],
+      [
+       "逐项列出",
+       "可重绑定"
+      ]
+     ]
+    },
+    {
+     "zh": "可发现性（首次使用有操作提示）",
+     "tiers": [
+      [
+       "提示"
+      ],
+      [
+       "操作提示",
+       "界面提示",
+       "help"
+      ],
+      [
+       "实测",
+       "验收"
+      ]
+     ]
+    },
+    {
+     "zh": "可恢复（暂停/退出鼠标捕获）",
+     "tiers": [
+      [
+       "退出"
+      ],
+      [
+       "Esc",
+       "暂停",
+       "退出捕获",
+       "光标"
+      ],
+      [
+       "验证",
+       "边界"
+      ]
+     ]
+    },
+    {
+     "zh": "可配置（灵敏度/反转 Y 轴）",
+     "tiers": [
+      [
+       "设置"
+      ],
+      [
+       "灵敏度",
+       "反转",
+       "设置面板"
+      ],
+      [
+       "保存",
+       "生效验证",
+       "默认值"
+      ]
+     ]
+    },
+    {
+     "zh": "操控手感（加速/转向可调、不失控）",
+     "tiers": [
+      [
+       "手感"
+      ],
+      [
+       "加速度",
+       "转向速率",
+       "阻尼",
+       "不失控"
+      ],
+      [
+       "实测",
+       "数值",
+       "对照"
+      ]
+     ]
+    },
+    {
+     "zh": "判定标准与证据",
+     "tiers": [
+      [
+       "测试"
+      ],
+      [
+       "判定标准",
+       "验收"
+      ],
+      [
+       "逐条",
+       "报告"
+      ]
+     ]
+    }
+   ],
+   "promptHasInterface": true
+  },
+  {
+   "id": "H3-fix-inverted-mesh",
+   "kind": "单文件 3D 产物·审计并修复反向面",
+   "prompt": "我有个坦克车体的网格，导入后发现有些面从外面看不见、从里面反而能看见。给我一个单文件 HTML：把它修好，并且能自己检测出修了几个面。另外我要能自动化验收（我没法每次都手点）：文件里请暴露一个纯函数 buildGeometry()（返回 {positions, indices}），并把 window.__selftest() 挂到全局，返回 JSON：{facesOutwardRatio, inwardFaces, faces, side, cullBackFaces, controls:{move,turn,turret,exitCapture,sensitivity,invertY}}。如果是\"修反向面\"这类任务，__selftest() 还要给出修复前的反向面数 brokenFacesBefore 与修复后的 inwardFaces。",
+   "criteria": [
+    {
+     "zh": "要求先量化：检测出\"有多少面朝向反了\"而不是凭感觉",
+     "tiers": [
+      [
+       "看看"
+      ],
+      [
+       "检测",
+       "统计",
+       "反向面数",
+       "审计"
+      ],
+      [
+       "修复前后对照",
+       "报告数值"
+      ]
+     ]
+    },
+    {
+     "zh": "要求给出检测方法（面法线与质心方向点积/绕序判定）",
+     "tiers": [
+      [
+       "检查"
+      ],
+      [
+       "法线",
+       "点积",
+       "绕序",
+       "winding",
+       "质心"
+      ],
+      [
+       "可判定",
+       "阈值",
+       "逐面"
+      ]
+     ]
+    },
+    {
+     "zh": "要求修复动作（翻转绕序或重算法线，并说明依据）",
+     "tiers": [
+      [
+       "修一下"
+      ],
+      [
+       "翻转",
+       "绕序",
+       "重算",
+       "统一朝向"
+      ],
+      [
+       "复核",
+       "复检",
+       "修复后为 0"
+      ]
+     ]
+    },
+    {
+     "zh": "要求修复前后计数（brokenFacesBefore / inwardFaces）",
+     "tiers": [
+      [
+       "数字"
+      ],
+      [
+       "修复前",
+       "修复后",
+       "计数",
+       "brokenFacesBefore"
+      ],
+      [
+       "逐项",
+       "断言"
+      ]
+     ]
+    },
+    {
+     "zh": "要求防复发（把检查固化进加载/导入流程）",
+     "tiers": [
+      [
+       "注意"
+      ],
+      [
+       "固化",
+       "检查清单",
+       "每次加载"
+      ],
+      [
+       "自动",
+       "回归"
+      ]
+     ]
+    },
+    {
+     "zh": "判定标准与证据（什么算修好了）",
+     "tiers": [
+      [
+       "测试"
+      ],
+      [
+       "判定标准",
+       "比例",
+       "为 0"
+      ],
+      [
+       "逐条",
+       "报告"
+      ]
+     ]
+    }
+   ],
+   "promptHasInterface": true
+  }
+ ],
+ "fairness": {
+  "at": "2026-09-15T14:21:35.650Z",
+  "note": "验收接口已写进用户原话（先前的规格不公平：接口只写在执行 AI 提示里）"
+ }
+}

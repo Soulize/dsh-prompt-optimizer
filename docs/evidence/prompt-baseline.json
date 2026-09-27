@@ -1,0 +1,128 @@
+{
+  "label": "baseline",
+  "at": "2026-09-14T15:04:50.645Z",
+  "liveLib": "C:/Users/WestFox/.dsh/plugins/dsh-prompt-optimizer-0.1.1-beta.1/package/lib/index.js",
+  "liveLibSha256": "83fb3cd7a8b0a01480aa0ce3b9485f0bc260f9fad2401bae7a51dbec76568cb9",
+  "liveLibBytes": 84291,
+  "cases": [
+    {
+      "id": "C1-simple",
+      "tier": "basic",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "把 README.md 里的错别字改一下，别的别动。",
+      "runId": "run7",
+      "wallMs": 2063,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 258,
+        "outputTokens": 41,
+        "totalTokens": 1067,
+        "cacheReadTokens": 768,
+        "reasoningTokens": 0
+      },
+      "textChars": 66,
+      "text": "读 README.md，只修正其中的错别字，其他内容一律不要改动。若无法确定某处是否属于错别字，不要擅自修改，先列出可疑项问我确认。"
+    },
+    {
+      "id": "C2-hard",
+      "tier": "basic",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "重构 auth 模块：必须保持现有 API 兼容，改完必须跑通现有测试，绝对不要动数据库 schema。",
+      "runId": "run8",
+      "wallMs": 2029,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 140,
+        "outputTokens": 55,
+        "totalTokens": 1091,
+        "cacheReadTokens": 896,
+        "reasoningTokens": 0
+      },
+      "textChars": 101,
+      "text": "重构 auth 模块。要求：保持现有 API 兼容；改完必须跑通现有测试；绝对不要改数据库 schema。动手前先确认 auth 模块的位置和现有测试的运行方式，若这两点无法确定，先问我，不要自行假设。"
+    },
+    {
+      "id": "C3-ambiguous",
+      "tier": "advanced",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "把那个页面弄好看点，动画也加上，顺手把数据那块也修一下",
+      "runId": "run9",
+      "wallMs": 8104,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 914,
+        "outputTokens": 1088,
+        "totalTokens": 2130,
+        "cacheReadTokens": 128,
+        "reasoningTokens": 677
+      },
+      "textChars": 646,
+      "text": "先定位再动手：找到我说的那个页面，以及\"数据那块\"具体指哪个组件、哪个接口或哪段取数逻辑。如果项目里存在多个看起来符合的页面或数据源，先把候选列给我确认是哪一个，不要自己挑一个就改。\n\n三项要求：\n\n1. 页面样式\n- 把该页面的视觉整理到能用的水平：整体布局对齐、间距统一、字号与层级分明、颜色有主次。\n- 按钮、输入框、下拉、表格、卡片等控件的默认/悬停/点击/禁用状态都要正常。\n- 桌面宽度和窄屏（手机宽度）下都不许出现错位、溢出、文字被挤成一团。\n- 沿用项目现有的 UI 方案和样式组织方式，不要另起一套风格体系。\n\n2. 动画\n- 加载/进入时要有过渡：列表或卡片的出现动画、页面区块的进入过渡。\n- 交互反馈要有：按钮及可点击元素的悬停与点击效果、弹窗/抽屉/展开收起有过渡。\n- 数据请求期间要有加载态（骨架或 loading 指示）。\n- 动效克制、流畅、不卡顿，用项目已有的方案实现；若必须引入动画库，先问我。\n\n3. 数据\n- 先复现问题并说清现象：是取不到、报错、字段取错、不刷新、还是格式不对。\n- 修好后保证这几种情况都正常显示、不报错：首次加载、手动刷新、空数据、请求失败。\n\n验收标准\n- 页面能正常打开，控制台无报错。\n- 上述所有交互状态与动效实际可见、可用。\n- 数据区在上述四种情况下都有对应展示，不再出现异常。\n- 改动只限这个页面和相关的数据逻辑，不顺手改其他页面和无关功能。\n\n交付时告诉我：改了哪些文件、数据问题原来的原因是什么、我怎么验证。"
+    },
+    {
+      "id": "C4-complex",
+      "tier": "extreme",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "把项目从 webpack 迁到 vite，同时把 React 17 升到 19，本周五要上线，出问题你能自己搞定吧？",
+      "runId": "run10",
+      "wallMs": 17211,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 348,
+        "outputTokens": 2752,
+        "totalTokens": 3868,
+        "cacheReadTokens": 768,
+        "reasoningTokens": 1242
+      },
+      "textChars": 2970,
+      "text": "先建立 goal：把项目从 webpack 迁移到 Vite，并把 React 从 17 升到 19，本周五前达到可上线状态；全程保持可回退、可随时中止，任一时点主干都能发布。按下面的阶段推进，每阶段开始前先把该阶段要动的东西读清楚再改。\n\n一、先做事实核查（不许假设）\n读取并记录实际现状，产出清单后再动手：\n- package.json：实际 React/react-dom 版本、构建脚本、全部 devDependencies/dependencies、packageManager 与锁文件类型。\n- webpack 配置全量（含 webpack.config、merge 出来的 dev/prod 差异、自定义 plugin、loader 规则）。\n- 转译与类型：babel 配置、tsconfig、.browserslistrc、postcss 配置。\n- 入口与 HTML：index.html 位置与模板变量、入口文件、多入口情况、public/ 目录用法。\n- 环境变量：process.env 的所有使用点、define plugin 注入了什么、运行时注入还是构建时注入。\n- 资源处理：css/less/sass、图片、svg（是否 svg-sprite-loader）、字体、worker、JSON 导入方式。\n- 开发体验相关：devServer proxy、alias、端口、HTTPS、history fallback。\n- 测试与 CI：单测框架与配置、e2e、CI 脚本、部署方式与产物目录。\n产出：一份\"webpack 特性 → Vite 对应方案\"逐条对照表，标出没有直接对应项、需要换库或需要人工决策的条目。实测版本与\"React 17 + webpack\"的描述不一致时，先报告差异，不要按假设继续。\n\n二、阶段计划（每阶段独立提交、独立可回滚）\n\n阶段 1：Vite 迁移，React 保持 17\n- 目标：同一份业务代码，在 React 17 下由 Vite 完成 dev 与 build。\n- 动作：加 vite 与 @vitejs/plugin-react、新建 vite.config、迁移 alias/proxy/环境变量（webpack define 的变量按 Vite 的 import.meta.env 口径改写，并同步修正所有使用点）、迁移静态资源与 public 语义、迁移 CSS 方案、修正 index.html 位置与入口引用。\n- 产出：dev server 可起、production build 成功、产物本地静态预览可跑通关键页面。\n- 纪律：先跑通最小可运行，再逐项补齐 loader 等价能力，一次只改一类东西。\n\n阶段 2：React 17 → 19\n- 动作：同步升级 react、react-dom、@types/react、@types/react-dom、react 相关 eslint 插件、以及所有 peerDependencies 声明 React 的库；对照 React 官方升级指南逐条核对并修改：ReactDOM.render → createRoot、hydrate → hydrateRoot、unmountComponentAtNode → root.unmount、移除的 findDOMNode、函数组件 defaultProps、字符串 refs、已移除的 legacy 生命周期、ReactDOM 命名空间下的旧 API 导入路径、测试渲染器的替代方案。\n- 产出：类型检查通过、单测通过、运行时无 React 弃用/移除 API 报错。\n\n阶段 3：验收与上线准备\n- 产出：一份可交付记录（见\"验收标准\"），以及\"回退到迁移前 webpack 版本\"的具体操作步骤。\n\n三、验收标准（必须可观测，达不到就不算完成）\n- 依赖安装干净：不靠 --force / --legacy-peer-deps 才能装成功。\n- production build 成功且无错误；构建告警逐条给出结论。\n- dev server 与 production 产物预览都能启动，关键路由逐条点过，无白屏、无控制台报错。\n- 环境变量在生产构建产物中替换正确（不残留未替换占位）。\n- 静态资源（图片/svg/字体/css）在产物中路径正确、无 404。\n- 类型检查、lint、单测全部通过，且没有为了通过而新增的忽略项。\n- CI 全绿，构建产物目录与部署侧约定一致。\n- 构建体积与耗时给一份前后对比数字。\n- React 19 运行时不出现被移除 API 的报错。\n\n四、硬约束\n- 不改变任何对外行为：页面表现、路由、接口调用、埋点、权限逻辑一律不动。\n- 不顺手升级与本次目标无关的依赖；必须升级的，逐条在报告里说明理由。\n- 不删测试、不跳过失败测试、不长期依赖 @ts-ignore / any 扩散 / eslint-disable / --force 掩盖问题。\n- 不擅自更换部署方式或产物目录约定。\n- 每个阶段结束时主干仍可发布；任何阶段失败，先回退到上一个绿点，不要在坏状态上继续叠加改动。\n- 在\"不改对外行为\"范围内，依赖选型、配置写法、目录细节你可以自己定；一旦要改对外行为、删功能、换库换到影响业务，先停下来问我。\n\n五、不要做\n- 不要一次性大爆炸式提交所有改动。\n- 不要用临时脚本或手写插件糊过 webpack loader 的缺失能力。\n- 不要为了赶时间降低 React 目标版本或退回 webpack 后宣称已完成。\n- 不要在没有实际执行验证的情况下说\"已完成/应该没问题\"。\n- 不要拖到周五才汇报风险。\n\n六、预案（出现即按此处理）\n1. 如果出现某资源/语法只有 webpack loader 或自定义 plugin 能处理：先查 Vite 官方或社区等价方案，改用等价方案；确无方案时，暂停该模块并单独报告，不要写临时脚本强糊，也不要删掉该功能绕过去。\n2. 如果出现第三方库与 React 19 不兼容（peer 冲突、运行时调用已移除 API）：先确认该库是否有支持 React 19 的版本或官方替代，做最小替换；不要靠 --force 或 patch-package 长期掩盖，也不要直接自研实现顶替。\n3. 如果出现构建成功但运行时白屏、路由 404、静态资源 404：先逐项对比 webpack 与 Vite 的 base/publicPath、产物目录、index.html 位置、dev proxy 差异，定位到具体配置项；不要用全局搜索替换碰运气。\n4. 如果周五前达不到全绿：先保证已通过的部分可合入且 webpack 方案仍可回退，尽早把剩余项、风险点和所需时间告诉我，由我决定上线范围；不要默默拖到 deadline，也不要未经确认就上线半成品。\n\n七、汇报节奏\n- 每阶段结束汇报：改了哪些文件、执行了哪些命令、关键命令的真实输出、当前风险、回滚方式。\n- 阶段 1 完成、阶段 2 完成、上线前各汇报一次；中途遇到需要我决策的问题立即汇报，不要积压。"
+    },
+    {
+      "id": "C5-history",
+      "tier": "advanced",
+      "turns": 2,
+      "historyMode": "turns",
+      "request": "接着刚才那个思路继续往下做。",
+      "runId": "run11",
+      "wallMs": 5073,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": {
+        "mode": "turns",
+        "turns": 2,
+        "userTurns": 2,
+        "chars": 278,
+        "omittedTurns": 0,
+        "budget": 12000,
+        "degraded": false,
+        "reason": null
+      },
+      "usage": {
+        "inputTokens": 659,
+        "outputTokens": 676,
+        "totalTokens": 2103,
+        "cacheReadTokens": 768,
+        "reasoningTokens": 470
+      },
+      "textChars": 336,
+      "text": "接着上一轮的思路往下做，不要重新开头、不要重述已经定过的东西，直接推进到下一步。\n\n1. 能省掉的开发步骤就省掉：能直接改完的不要拆成多步，能一步落地的不要新建流程。\n2. 不一定要用 task，也不一定要用 goal；不要为了走流程而强行引入它们。\n3. 由优化 AI 根据当前任务的实际难度，自动决定会话 AI 该用多长的开发流程：简单任务直接执行即可。\n4. 这个判断必须严谨：既不因过度简化而徒增开销，也不因图快而漏过隐患；依据实际任务内容判断，不要凭感觉。\n5. 继续推进当前未完成的部分，不要另起新方向、不要扩大改动范围。\n\n如果\"刚才那个思路\"当前的具体落点不明确，先读取本次会话已有的上下文和相关文件确认真实进度，再继续往下做；不要自行假设、不要另立方案。"
+    }
+  ]
+}

@@ -16,7 +16,7 @@
 > | 仓库根直接 clone | 与本 Release 同源，适合开发者 | ⚠️ 需要自己构建，普通使用走 Release 更省事 |
 >
 > 想找 0.1 ~ 0.6 的旧版本？见 [`old/`](old/README.md)（含各代简介与下载方法）。
-> 想自己发一版？见 [`RELEASING.md`](RELEASING.md)（9 步发布规程 + 检查清单）。
+> 想自己发一版？见 [`RELEASING.md`](docs/RELEASING.md)（9 步发布规程 + 检查清单）。
 > ### 30 秒装上 0.7.5
 >
 > ```powershell
@@ -139,8 +139,8 @@
 - 安装与自检：[`po06/README.md`](po06/README.md) ｜ 当前 Release：**[v0.7.5](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.7.5)**
 - 兼容：`dsh-0.1.6-alpha.1`（`0.1.5-rc.1` 亦可运行）｜ 作者：啃轮胎的西狐
 - **上一代（0.5 线，仍可用，但已不再更新）**：装在另一个包 `@dsh-external/dsh-prompt-optimizer`，
-  最后发布 `v0.5.0-beta.1`；设计与用法见 [`SPEC.md`](SPEC.md)，历史文档（含 0.5 的实测数据）见
-  **[`README-0.5.md`](README-0.5.md)** —— 那里的数字**只属于 0.5**，不是 0.6 的效果证据。
+  最后发布 `v0.5.0-beta.1`；设计与用法见 [`SPEC.md`](docs/SPEC.md)，历史文档（含 0.5 的实测数据）见
+  **[`README-0.5.md`](old/0.5/README.md)** —— 那里的数字**只属于 0.5**，不是 0.6 的效果证据。
 
 ## 许可
 

@@ -1,0 +1,128 @@
+{
+  "label": "optimized",
+  "at": "2026-09-14T15:08:14.244Z",
+  "liveLib": "C:/Users/WestFox/.dsh/plugins/dsh-prompt-optimizer-0.1.1-beta.1/package/lib/index.js",
+  "liveLibSha256": "79c2e723578381b4620c64d353cd9a119881172cd7e2a02be54697cc755cd2d1",
+  "liveLibBytes": 87706,
+  "cases": [
+    {
+      "id": "C1-simple",
+      "tier": "basic",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "把 README.md 里的错别字改一下，别的别动。",
+      "runId": "run1",
+      "wallMs": 5096,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 1122,
+        "outputTokens": 681,
+        "totalTokens": 1803,
+        "cacheReadTokens": 0,
+        "reasoningTokens": 643
+      },
+      "textChars": 56,
+      "text": "只改 README.md 里的错别字，其余一律不动；拿不准是不是错别字的先问我，别自己改。改完说一声改了哪几处。"
+    },
+    {
+      "id": "C2-hard",
+      "tier": "basic",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "重构 auth 模块：必须保持现有 API 兼容，改完必须跑通现有测试，绝对不要动数据库 schema。",
+      "runId": "run2",
+      "wallMs": 11126,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 236,
+        "outputTokens": 2332,
+        "totalTokens": 3464,
+        "cacheReadTokens": 896,
+        "reasoningTokens": 2293
+      },
+      "textChars": 77,
+      "text": "重构 auth 模块：必须保持现有 API 兼容；改完必须跑通现有测试；绝对不要动数据库 schema。做不到就停下报告，不要自行改接口或 schema。"
+    },
+    {
+      "id": "C3-ambiguous",
+      "tier": "advanced",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "把那个页面弄好看点，动画也加上，顺手把数据那块也修一下",
+      "runId": "run3",
+      "wallMs": 15273,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 1028,
+        "outputTokens": 2528,
+        "totalTokens": 3812,
+        "cacheReadTokens": 256,
+        "reasoningTokens": 2175
+      },
+      "textChars": 566,
+      "text": "先列 3~6 条 todo，按顺序做，做完逐条勾掉。没跟我确认清楚范围之前，不许动代码。\n\n1. 先把\"那个页面\"指哪、以及\"数据那块\"指什么，定下来。在项目里找出候选页面和对应的数据问题，把候选列给我：文件位置 + 现在是什么现象。有多个候选、或者找不到，就停下来问我，不许自己挑一个开工。\n\n2. 数据这块先只查不改。查清具体症状（页面打不开 / 数据不显示 / 显示的不对 / 请求失败 / 明显卡），把复现步骤和报错原文给我。我确认之前，不得改数据结构（表、字段、索引），不得执行写入、迁移、删除、覆盖数据这类不可回退的操作。\n\n3. 外观按我确认的那个页面改，只动样式层。做完要满足：页面在浏览器里正常打开，已有的功能、文案含义、字段和交互结果一个都不能变，不出现元素重叠、文字溢出、被遮挡。\n\n4. 动画加在这个页面已有的元素上，能正常播放，不能卡到影响页面操作。\n\n5. 数据问题按我确认的那个症状修，修完用我给的那条复现路径整条跑通。\n\n范围就这一个页面加数据的那个问题，不许顺手重构其他页面或模块。不得引入新的第三方依赖；确实需要就先问我。\n\n每步做完把验证跑一遍再进下一步，验证方式用项目里现成的启动/运行方式，别自己新造一套。\n\n全部做完给我：改了哪些文件、每步分别怎么验证的、界面和数据的实际效果各是什么样。"
+    },
+    {
+      "id": "C4-complex",
+      "tier": "extreme",
+      "turns": 0,
+      "historyMode": "turns",
+      "request": "把项目从 webpack 迁到 vite，同时把 React 17 升到 19，本周五要上线，出问题你能自己搞定吧？",
+      "runId": "run4",
+      "wallMs": 20243,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": null,
+      "usage": {
+        "inputTokens": 1051,
+        "outputTokens": 3557,
+        "totalTokens": 4864,
+        "cacheReadTokens": 256,
+        "reasoningTokens": 2591
+      },
+      "textChars": 1698,
+      "text": "目标：把这个项目从 webpack 迁到 vite，并把 React 从 17 升到 19。\n\n完成判据（每条都要给出你实际执行的命令与输出）：按 package.json 里确认的 dev / build 走 vite 后，dev 能启动、build 能产出产物、preview 能打开；React 版本确实为 19；迁移前后同一组页面/路由逐一对比无行为差异；项目既有的自动化检查（先读 package.json 与 CI 配置确认有哪些）全部通过。\n\n执行方式：先建立 goal：把项目从 webpack 迁到 vite 并完成 React 17→19 升级（验收：vite dev / build / preview 可用 + 迁移前后逐页对比一致 + 项目既有自动化检查全通过）；分 5 个阶段推进，每阶段先验证再进下一阶段。\n\n硬约束：\n- 动手前先读项目根目录，确认包管理器（看 lock 文件）、webpack 配置文件名与位置、入口文件、静态资源目录、环境变量文件、package.json 的 scripts、有无测试与 CI 配置、是否 git 仓库及当前分支状态。这些路径我不提供，你自己读出来；读不到的问我，不要猜。\n- 必须在可回退的基线上做：是 git 仓库就在新分支上做，不动主干；不是 git 仓库先做整目录备份。做不到就停下报告，不要直接开改。\n- 旧 webpack 配置与相关依赖在本次交付结束前不得删除或卸载，留作回退路径；是否清理等我说。\n- 不得顺手升级或替换与本次迁移无关的依赖；不得改动对外接口、后端契约、环境变量名、部署脚本。\n- 若 React 19 或 vite 要求改对外接口 / 环境变量 / 部署配置才能跑通，先停下告诉我，不要自行改。\n- 上线（发布、部署）由我决定并执行。你只交可运行的项目和验证证据，不得自行部署或发布。\n- 周五上线是我定的时间点。任一步骤失败或超出范围就立刻停下报现状与可选路径，不得为赶时间跳过验证、砍功能、或先上线一半。\n- 汇报只给事实、命令与输出，不要写“保证没问题”“能搞定”这类结论。\n\n分阶段执行计划（每阶段先验证再进下一阶段；每次改动后必须给证据；失败即回退到上一步验证通过的状态；不得擅自扩大范围）：\n1. 摸底：读上面列出的文件，产出“现状清单 + 迁移影响面清单”，写清哪些改动会碰到对外接口、环境变量、部署脚本。\n2. 建基线：确认回退路径（分支或备份），跑一遍迁移前的 dev / build / 既有检查或手测清单，记录迁移前基线结果。\n3. 接入 vite（React 仍保持 17）：加 vite 相关依赖、写 vite 配置、改 scripts，验证 dev 启动、build 出产物、preview 逐页对比与基线一致。\n4. 升 React 19：先读 React 19 官方升级说明，逐项定位项目里需要改的地方，一次改一处、一处一验，产出“改动清单 + 每条对应的报错或文档依据”。\n5. 全量回归与收尾：跑全部既有检查与逐页对比，产出交付报告（改动文件清单、验证命令与输出、未解决项、回退方式）。旧 webpack 配置与依赖保持不动。\n\n预案：\n- 如果出现某依赖在 vite 下无法解析或缺少对应插件（触发信号：dev 或 build 报模块解析错误），就先记录完整报错与涉及依赖的版本，查该依赖是否有官方 vite 支持，不要直接换成别的库、不要为此降级 React。\n- 如果出现 React 19 报错来自项目里用了 17 时代的废弃 API（触发信号：报错点名某个被移除的 API），就先按报错逐处定位、逐处单独改，不要全局搜索替换。\n- 如果出现能构建成功但页面行为与迁移前不一致（触发信号：同一页面/路由在 dev 下表现与基线不同），就先固定可复现步骤、记录差异点，再定位到具体改动，不要继续往下改其他模块。\n- 如果出现进度到不了周五（触发信号：某阶段未通过验证），就先向我报告已完成/未完成清单与阻塞点，不要自行砍功能、跳过验证或改成部分上线。"
+    },
+    {
+      "id": "C5-history",
+      "tier": "advanced",
+      "turns": 2,
+      "historyMode": "turns",
+      "request": "接着刚才那个思路继续往下做。",
+      "runId": "run5",
+      "wallMs": 18233,
+      "error": null,
+      "status": "done",
+      "runError": null,
+      "history": {
+        "mode": "turns",
+        "turns": 2,
+        "userTurns": 2,
+        "chars": 338,
+        "omittedTurns": 0,
+        "budget": 12000,
+        "degraded": false,
+        "reason": null
+      },
+      "usage": {
+        "inputTokens": 1335,
+        "outputTokens": 3296,
+        "totalTokens": 5655,
+        "cacheReadTokens": 1024,
+        "reasoningTokens": 2876
+      },
+      "textChars": 751,
+      "text": "继续做，不要重头来。\n\n1. 先定位落点：读 `C:\\Users\\WestFox\\.dsh\\plugins\\dsh-prompt-optimizer\\` 目录下当前的改动文件，以及 `evidence\\prompt-cases.cjs` 的 baseline 那组跑出来的输出，确认\"那个思路\"目前停在哪个文件、哪一步。\n\n2. 要接着做完的是：让这个插件里的优化 AI 根据任务难度自动为会话 AI 决定开发长度——简单任务直接执行，不套任务、不套 goal；只有难度够的任务才走长流程。判断必须严谨：既不因为流程加码徒增开销，也不因为省步骤漏掉隐患。\n\n3. 若做完第 1 步仍无法确定\"那个思路\"具体指哪处改动、或它实际是别的事，停下来向我确认，不要自己挑一个方向开工。\n\n4. 流程长度：中。先列 3~6 条 todo，按顺序做，做完逐条勾掉；不要建 goal、不要写阶段文档。\n\n硬约束：\n- 必须做：难度判断要落在插件实际执行的逻辑里并影响输出，不能只写在注释或文档里。做不到即视为没做完。\n- 不得做：不得新增依赖；不得改动与这件事无关的既有行为和输出结构；简单任务不得产出 goal、todo、阶段文档。若改动会导致与调用方不兼容，停下来报告，不要自行改接口。\n- 做完必须满足：用 `node C:\\Users\\WestFox\\.dsh\\plugins\\dsh-prompt-optimizer\\evidence\\prompt-cases.cjs baseline` 重跑，简单用例的输出里不再出现 goal/todo 类步骤，难用例仍保留；除这一处差异外，其余输出与改动前一致。\n\n5. 验证：跑上面那条命令，逐条比对改动前后的输出差异并列出；差异对不上第 4 条判据的，不许收工。"
+    }
+  ]
+}
