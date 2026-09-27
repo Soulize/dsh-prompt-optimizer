@@ -16,8 +16,8 @@
 > | 渠道 | 是什么 | 该不该用 |
 > |---|---|---|
 > | **GitHub Release 附件** | 当前版本（`@dsh-external/dsh-po06`） | ✅ **唯一正确来源**，就是下面这段命令 |
-> | **npm 上的 `@dsh-external/dsh-prompt-optimizer`** | **0.5 时代的老包，已停止维护** | ❌ **不要装**（名字像，但不是这个版本） |
-> | **npm 上的 `@dsh-external/dsh-po06`** | 不存在——当前版本 `private: true`，**刻意不发 npm** | — |
+> | **npm** | **本插件不发 npm**（`private: true`），只在 Release 分发；
+>   registry 上搜到的同名或相似包**都不是本项目** | ❌ 不要从 npm 装 |
 > | 仓库根直接 clone | 与本 Release 同源，适合开发者 | ⚠️ 需要自己构建，普通使用走 Release 更省事 |
 >
 > 想找 0.1 ~ 0.6 的旧版本？见 [`old/`](old/README.md)（含各代简介与下载方法）。

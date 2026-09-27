@@ -20,8 +20,8 @@ showpiece-quality.
 > | Channel | What it is | Use it? |
 > |---|---|---|
 > | **GitHub Release asset** | The current version (`@dsh-external/dsh-po06`) | ✅ **The only correct source** — the command below |
-> | **npm `@dsh-external/dsh-prompt-optimizer`** | A **0.5-era package, no longer maintained** | ❌ **Do not install** (similar name, different version) |
-> | **npm `@dsh-external/dsh-po06`** | Does not exist — the current version is `private: true`, **deliberately not published to npm** | — |
+> | **npm** | **This plugin is not published to npm** (`private: true`); it ships via Releases only.
+>  Any same-named or similar package on the registry **is not this project**. | ❌ Do not install from npm |
 > | Cloning the repo root | Same source as this Release, for developers | ⚠️ You must build it yourself; Releases are easier for normal use |
 >
 > Looking for versions 0.1–0.6? See [`old/`](old/README.md) (per-generation notes and download methods).
