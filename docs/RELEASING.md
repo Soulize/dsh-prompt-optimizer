@@ -156,6 +156,19 @@ node po06-beta/make-release.mjs
 | Release 没有附件 | 重跑步骤 8；脚本会重建 Release |
 | 推送被拒 | 当前分支是否是 main；先 `git pull --rebase origin main` |
 | 测试红了 | 先修测试再发布；**不要**为了发版跳过红用例 |
+| **切分支后工作区内容突然变旧**（README 回到旧版本、`lib/` 又冒出来、`old/` 不见了） | **本地分支落后于远程，你切到了一个过期的 main**。切入前先核对：`git rev-list --left-right --count origin/main...main`（左=落后、右=领先）；若落后 > 0，`git fetch && git reset --hard origin/main` 即可对齐 |
+
+### 5.1 一条真实踩过的坑（2026-09-26）
+
+发布 v0.7.6 之后，为了删分支而执行了 `git checkout main`。**那条本地 main 落后远程 322 个提交**
+（全部工作都在 `dev/0.6` 上，推送时用的是 `git push origin HEAD:main`，所以远程一直是对的）——
+于是工作区**瞬间回到 0.5 时代**：README 变成 `v0.5.1-beta.1`、`lib/` 重新出现、`old/` 消失。
+而当时正在改 README，**改的其实是那份旧 README**，与用户在 GitHub 上看到的完全不是同一份。
+
+**根因**：切分支前没核对本地与远程的关系。
+**代价**：差点在错误的分支上提交，也差点误判成仓库出问题。
+**规矩**：**任何切分支前，先跑一次 `git rev-list --left-right --count origin/main...main`**；
+看到落后不为零，就先 `git fetch` + `git reset --hard origin/main` 再动手。
 
 ## 六、为什么这样设计（一句话版）
 
