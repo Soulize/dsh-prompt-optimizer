@@ -542,6 +542,20 @@ function toolPresentInTable(tools, name) {
 export function syncBashTool(ctx) {
   let want = true
   try { want = readPolicy({ home: DSH_HOME }).bash !== false } catch { want = true }
+  // ⚠ 2026-09-26：**让位判据**（用户反馈：Linux 用户关了内置 bash 后什么都没有）。
+  //
+  // 背景：宿主的 @deepseek-ai/dsh-tool-bash 也注册名为 bash 的工具，而它在
+  //   @deepseek-ai/dsh-base/cordis.patch.yml 里写着 `disabled: !!js process.platform === 'win32'`
+  // —— 即**官方只在 Windows 上禁用它**。于是：
+  //   非 win32：宿主本来就提供 bash，用户说"原来的 bash 更好"是成立的，**po06 不该抢这个名字**；
+  //    win32 ：宿主被官方禁用，po06 的内置 bash 是唯一来源，必须补位。
+  // 此前 po06 无差别注册 bash ⇒ 在 Linux/macOS 上把宿主那份顶掉；
+  // 而宿主只在装配时注册一次、被顶掉后不会重试 ⇒ 用户一关内置，表里就彻底没有 bash 了。
+  //
+  // 为什么用**平台**而不是"查表里有没有 bash"：表里只看得到名字，分不清那份是谁注册的；
+  // 若用"查表"，po06 自己刚注册完再查就会把自己认成宿主，判据失明。平台是静态事实，不依赖时序。
+  const hostProvidesBash = process.platform !== 'win32'
+  if (hostProvidesBash) want = false
   const hostCtx = ctx || hostCtxForBashSync
   const scope = bashToolScope
   const tools = (scope && scope.tools) ? scope.tools
