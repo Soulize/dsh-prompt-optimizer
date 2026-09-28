@@ -1159,7 +1159,12 @@ async function ensureModelRoute(ctx, sid) {
   // ③ 宿主的默认模型服务（Agent 没有会话级选择时，宿主自己会用的那条）
   try {
     const adm = ctx.get('agentDefaultModel')
-    for (const fn of ['current', 'read', 'get', 'selection']) {
+    // ⚠ 2026-09-26 修（用户反馈）：方法名原先写的是 current/read/get/selection ——**四个都不存在**，
+    // 于是这一整段空转，直接掉到下面的第④步"清单第一条"，新会话首条消息便用一个与会话无关的模型
+    // 去优化（用户实测：选「跟随会话模型」时复现；之后的消息正常，因为那时已从 request/header 观测到）。
+    // 实测该服务的真方法是 **currentSelection()**（返回 {provider, model} 形状，正好能被 pickProviderModel 解析），
+    // 另有 saveSelection()。旧名一并保留在后面，便于宿主改名时仍能兜住。
+    for (const fn of ['currentSelection', 'current', 'read', 'get', 'selection']) {
       if (adm && typeof adm[fn] === 'function') {
         const p = pickProviderModel(await adm[fn]())
         if (p) { observeModel(sid, p); return { ok: true, source: 'host-default' } }
