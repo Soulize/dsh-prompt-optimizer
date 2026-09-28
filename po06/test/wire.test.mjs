@@ -889,7 +889,7 @@ await ta('档位关闭（assist:off）⇒ context 提供者必须返回空，哪
 
 t('静态守卫：注入门禁必须同时查 ① 启用闸门 与 ② 档位政策（缺一个就是这次的 bug）', () => {
   const src = readFileSync(join(HERE, '..', 'lib', 'index.js'), 'utf8')
-  const i = src.indexOf('const pol = adapter.policyNow ? adapter.policyNow() : null')
+  const i = src.indexOf('const pol = adapter.policyNow ? adapter.policyNow(sid) : null')
   ok(i > 0, 'context 提供者里必须查政策（policyNow）')
   const around = src.slice(Math.max(0, i - 900), i + 200)
   ok(/enableGate\.ensure\(sid\)/.test(around), '① 启用闸门仍要在（别把原来的守卫删了）')

@@ -875,7 +875,8 @@ async function runProductionInput(ctx, session, message, { trigger = 'user-messa
     // 用户设置 → 政策（EV-0143）：`assist: off` 就是"只记录、不补充"——
     // **不解释、不注入**（省一次模型调用），并在台账里留下可归因的理由。
     // 这一条让控制面板上那句"只记录、不补充"**真的**是那个意思。
-    const pol = readPolicy({ home: DSH_HOME })
+    // ⚠ 档位按会话（0.7.7）：这里必须带上 sid，否则会话级覆盖读不到
+    const pol = readPolicy({ home: DSH_HOME, sessionId: sid })
     if (!pol.injectPacket) {
       appendWireLog({ ...base, trigger, ok: false, reason: 'assist-off',
         policy: { assist: pol.assist, detail: pol.detail, budget: pol.budget } })
@@ -1267,7 +1268,7 @@ async function runInterceptInput(ctx, payload) {
   //      `adapter.getIntentText(sid)` 会把**上一轮的包**当成"这一轮的产出"返回给界面并注入。
   {
     let pol = null
-    try { pol = readPolicy({ home: DSH_HOME }) } catch { pol = null }
+    try { pol = readPolicy({ home: DSH_HOME, sessionId: sid }) } catch { pol = null }
     if (pol && pol.injectPacket !== true) {
       const cleared = adapter.clearIntentTexts('intercept:assist-off')
       interceptedText.delete(sid)
@@ -1397,12 +1398,15 @@ class DshAdapter {
    * 却挡不住**已经存在**的那一份包 —— 它继续被注入到后面每一轮装配里。
    * 档位是政策（`assist:'off'` ⇒ `injectPacket:false`），注入前必须按政策硬短路。
    */
-  policyNow() {
+  policyNow(sessionId) {
+    const key = (sessionId === undefined || sessionId === null) ? '' : String(sessionId)
     const now = Date.now()
-    if (this.policyCache && (now - this.policyCache.at) < 2000) return this.policyCache.pol
+    // ⚠ 缓存必须**按会话分键**（0.7.7）：档位现在是会话级的，
+    //   若还按单一键缓存，A 会话算出的政策会被 B 会话直接复用 ⇒ 会话级档位形同虚设。
+    if (this.policyCache && this.policyCache.key === key && (now - this.policyCache.at) < 2000) return this.policyCache.pol
     let pol = null
-    try { pol = readPolicy({ home: DSH_HOME }) } catch { pol = null }
-    this.policyCache = { at: now, pol }
+    try { pol = readPolicy({ home: DSH_HOME, sessionId: key }) } catch { pol = null }
+    this.policyCache = { at: now, key, pol }
     return pol
   }
 
@@ -1659,7 +1663,7 @@ class DshAdapter {
                 // 它挡的是"**产生新包**"，挡不住"**注入已有包**"。于是关档之后，缓存里那份上一轮的包
                 // 继续被注入到每一轮装配里 —— 两条成因（缓存没清 / 门禁漏判）**都成立**，两条都要修。
                 // 这里是硬短路：读到"不注入"就连缓存都不看。
-                const pol = adapter.policyNow ? adapter.policyNow() : null
+                const pol = adapter.policyNow ? adapter.policyNow(sid) : null
                 if (pol && pol.injectPacket !== true) return ''
                 return this.intentBySession.get(sid) || ''
               } catch (e) {

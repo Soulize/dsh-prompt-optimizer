@@ -72,6 +72,18 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ⚠ 字段顺序与 normalizeSettings 的产出保持一致（测试用整对象相等钉默认形状）。
   // 形状：{ "provider/model": "effortId" }；缺少该模型的条目 = 不传，由 provider 用自己的默认。
   effortByModel: {},
+  // 0.7.7：**按会话的档位覆盖**（用户 2026-09-26：「会话模型都能独立，档位没理由全局」）。
+  //
+  // 为什么需要：此前的档位（辅助/补充程度/自主预算/档位糖）是**全局单一值**——
+  // 在一个会话里设成"重度"，所有会话一起变。用户实测到的困惑就来自这里：
+  // 他以为档位是按会话的（像会话模型那样），于是"A 会话重度、B 会话关闭"被理解成可能的状态，
+  // 而实际上 B 只是跟着全局走。
+  //
+  // 形状：{ [sessionId]: { assist?, detail?, budget?, tier? } } ——**只存与该会话有关的档位项**，
+  // 缺的项回落到全局值。改这里不动全局，全局也只影响"没被覆盖的会话"。
+  // ⚠ 只允许档位相关键：`bash`/`model`/`effortByModel`/`permission` 等仍是全局的
+  //   （它们是"这台机器怎么跑"，不是"这个会话怎么跑"），越界的键会被归一化丢弃并记问题。
+  bySession: {},
   permission: 'auto',   // P10
   historyMode: 'turns', // P10
   turns: 6,             // P10：回合模式的窗口
@@ -84,12 +96,16 @@ export const DEFAULT_SETTINGS = Object.freeze({
   bash: true,
 })
 
+/** 允许按会话覆盖的键（档位四件套；其余设置保持全局）。 */
+export const SESSION_KEYS = Object.freeze(['assist', 'detail', 'budget', 'tier'])
+
 /** 白名单：只有这些键会被读/写。 */
 export const SETTINGS_KEYS = Object.freeze([
   'assist', 'detail', 'budget', 'model',
   'permission', 'historyMode', 'turns', 'readTools',
   'bash',
   'effortByModel',
+  'bySession',
 ])
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -133,6 +149,30 @@ export function normalizeSettings(raw) {
     }
     return v
   }
+  // 按会话的档位覆盖：{ [sessionId]: { assist?, detail?, budget?, tier? } }。
+  // 只认 SESSION_KEYS 四个档位键；越界的键（如 bash/model）**丢弃并记问题**——
+  // 它们是这台机器的属性，不该被某个会话改掉。逐条校验、坏条目单条丢弃，不整表回退。
+  const pickSessionMap = () => {
+    const v = src.bySession
+    if (v === undefined) return {}
+    if (!isPlainObject(v)) { problems.push({ key: "bySession", kind: "wrong-type", got: v, used: {} }); return {} }
+    const domains = { assist: ASSIST_MODES, detail: DETAIL_LEVELS, budget: BUDGET_LEVELS, tier: TIER_LEVELS }
+    const out = {}
+    for (const [sid, ov] of Object.entries(v)) {
+      if (typeof sid !== "string" || !sid) continue
+      if (!isPlainObject(ov)) { problems.push({ key: "bySession[" + sid + "]", kind: "wrong-type", got: ov, used: undefined }); continue }
+      const clean = {}
+      for (const k of Object.keys(ov)) {
+        if (!SESSION_KEYS.includes(k)) { problems.push({ key: "bySession[" + sid + "]." + k, kind: "not-session-scoped", got: ov[k], used: undefined }); continue }
+        const val = ov[k]
+        if (val === undefined) continue
+        if (typeof val !== "string" || !domains[k].includes(val)) { problems.push({ key: "bySession[" + sid + "]." + k, kind: "not-in-domain", got: val, used: undefined }); continue }
+        clean[k] = val
+      }
+      if (Object.keys(clean).length) out[sid] = clean
+    }
+    return out
+  }
   // 思考档位表：{ "provider/model": "effortId" }。逐条校验，坏条目丢弃并记 problems——
   // **不整表回退**：一个模型的档位写坏了，不该把别的模型已配好的档位一起清掉。
   const pickEffortMap = () => {
@@ -158,6 +198,7 @@ export function normalizeSettings(raw) {
     budget: pick('budget', BUDGET_LEVELS, base.budget),
     model: null,
     effortByModel: pickEffortMap(),
+    bySession: pickSessionMap(),
     permission: pick('permission', PERMISSIONS, DEFAULT_SETTINGS.permission),
     historyMode: pick('historyMode', HISTORY_MODES, DEFAULT_SETTINGS.historyMode),
     turns: pickInt('turns', TURNS_MIN, TURNS_MAX, DEFAULT_SETTINGS.turns),

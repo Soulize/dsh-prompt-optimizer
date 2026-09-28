@@ -34,8 +34,23 @@ export const DEFAULT_ASSIST = 'auto'
  * 不可达的防御代码是一种**谎报**——它看起来在保证什么，其实什么都没保证。
  * 真正要守的不变量交给测试：**settings.js 的每个值域里的每个取值都必须在这里有映射**（见 policy.test.mjs）。
  */
-export function policyFor(settings) {
+/**
+ * 合并全局默认与某会话的档位覆盖（0.7.7）。
+ *
+ * 为什么要有这一层：档位此前是**全局单一值**——一个会话设成重度，所有会话一起变。
+ * 而用户的直觉是「会话模型都能独立，档位也该独立」（2026-09-26 提出）。
+ * 合并规则：**会话覆盖优先**，没被覆盖的项回落全局 —— 所以旧配置（无 bySession）行为完全不变。
+ * 越界的会话键已在 normalizeSettings 里被丢弃，这里不再重复校验。
+ */
+export function effectiveSettings(settings, sessionId) {
   const s = normalizeSettings(settings).settings
+  const sid = (sessionId === undefined || sessionId === null) ? '' : String(sessionId)
+  const ov = (sid && s.bySession && typeof s.bySession === 'object') ? s.bySession[sid] : null
+  return ov ? { ...s, ...ov, bySession: s.bySession } : s
+}
+
+export function policyFor(settings, sessionId) {
+  const s = effectiveSettings(settings, sessionId)
   return {
     assist: s.assist,
     model: s.model,
@@ -63,8 +78,8 @@ export function policyFor(settings) {
     // 旧的四档只映射 assist/detail/budget，**标准与重度的 detail 是同一个值** ⇒
     // 「重度」= 「标准 + 多 1 个提问」。现在档位另外带一份**策略**（怎么想），
     // 由 strategy.js 唯一决定；下游（解释层提示词、编译器、只读工具）读 `pol.strategy`。
-    tier: tierOf(s),
-    strategy: strategyForTier(tierOf(s)),
+    tier: tierOf(effectiveSettings(settings, sessionId)),
+    strategy: strategyForTier(tierOf(effectiveSettings(settings, sessionId))),
   }
 }
 
@@ -72,10 +87,10 @@ export function policyFor(settings) {
  * 读**生效**的政策：`<home>/po06.json` 里的设置 → 归一化 → 政策。
  * 任何读/解析异常都回落到默认政策（保守：默认档位就是今天的行为）。
  */
-export function readPolicy({ home, readFile } = {}) {
+export function readPolicy({ home, readFile, sessionId } = {}) {
   const read = readFile || ((p) => { try { return existsSync(p) ? readFileSync(p, 'utf8') : null } catch { return null } })
   let raw = null
   try { const t = read(join(String(home), 'po06.json')); raw = t ? JSON.parse(t) : null } catch { raw = null }
-  const p = policyFor(raw || {})
+  const p = policyFor(raw || {}, sessionId)
   return { ...p, source: raw ? 'config' : 'default' }
 }

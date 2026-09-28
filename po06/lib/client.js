@@ -290,7 +290,11 @@ window.__ModuleLoader__.load({
       return [state, tick]
     }
 
-    const useStatus = () => usePoll(React.useCallback(() => apiGet('/status'), []), 15000)
+    // ⚠ 0.7.7：带上 session —— 档位改成会话级后，界面必须读【本会话生效的档位】，
+//   而不是全局那个（否则 A 会话设成关闭、B 会话的界面也跟着显示关闭）。
+const useStatus = (sessionId) => usePoll(React.useCallback(
+  () => apiGet('/status' + (sessionId ? ('?session=' + encodeURIComponent(sessionId)) : '')),
+  [sessionId]), 15000)
     const useTurns = (n) => usePoll(React.useCallback(() => apiGet('/turns?limit=' + n), [n]), 15000)
     const useState_ = (sid) => usePoll(
       React.useCallback(() => (sid ? apiGet('/state?session=' + encodeURIComponent(sid)) : Promise.resolve(null)), [sid]),
@@ -776,15 +780,15 @@ window.__ModuleLoader__.load({
       return h('div', { 'data-po06': 'controls' },
         h('div', { style: S.row },
           h('span', { style: S.label }, L('辅助','Assist')),
-          h(Options, { value: s.assist, options: ['off', 'auto'], labels: ASSIST_LABELS, onChange: (v) => save({ assist: v }) }),
+          h(Options, { value: eff.assist, options: ['off', 'auto'], labels: ASSIST_LABELS, onChange: (v) => save({ bySession: withSession({ assist: v }) }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('补充程度','Detail')),
-          h(Options, { value: s.detail, options: ['minimal', 'standard', 'detailed'], labels: DETAIL_LABELS, onChange: (v) => save({ detail: v }) }),
+          h(Options, { value: eff.detail, options: ['minimal', 'standard', 'detailed'], labels: DETAIL_LABELS, onChange: (v) => save({ bySession: withSession({ detail: v }) }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('自主预算','Autonomy')),
-          h(Options, { value: s.budget, options: ['minimal', 'standard', 'generous'], labels: BUDGET_LABELS, onChange: (v) => save({ budget: v }) }),
+          h(Options, { value: eff.budget, options: ['minimal', 'standard', 'generous'], labels: BUDGET_LABELS, onChange: (v) => save({ bySession: withSession({ budget: v }) }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('解释层模型','Explainer model')),
@@ -1487,7 +1491,7 @@ window.__ModuleLoader__.load({
       // 宿主按**标准 props** 注入：`sessionId`（会话作用域）与 `inputActions`（放行通道，见 slots.d.ts:201-255）。
       // ⚠ `inputActions` 拿不到 ⇒ **绝不拦截**（拦下却没有放行通道 = 把用户的消息吞掉）。
       const { sessionId, inputActions } = props || {}
-      const [status, refreshStatus] = useStatus()
+      const [status, refreshStatus] = useStatus(sessionId)
       const [open, setOpen] = React.useState(false)
       // 「优化选项」弹出面板（用户 2026-09-22：档位这些收进一个按钮里）
       const [optOpen, setOptOpen] = React.useState(false)
@@ -1559,7 +1563,18 @@ window.__ModuleLoader__.load({
       const data = status.data
       const s = (data && data.settings) || {}
       const d = (data && data.described) || null
-      const tier = (d && typeof d.tier === 'string') ? d.tier : tierOfSettings(s)
+      // ⚠ 0.7.7 会话级档位：`sessionEffective/sessionDescribed` 是**本会话生效**的值
+      //   （全局 + 该会话覆盖的合并结果）。没有就回退全局，行为与改动前一致。
+      const eff = (data && data.sessionEffective) || s
+      const effD = (data && data.sessionDescribed) || d
+      const tier = (effD && typeof effD.tier === 'string') ? effD.tier : tierOfSettings(eff)
+      // 把档位补丁写进【本会话的覆盖】：只动这个会话，全局默认保持原样。
+      // 形状与 settings.js 的 bySession 一致；越界键（bash/model 等）会被后端丢弃并记问题，
+      // 所以这里只传档位四件套。
+      const withSession = (patch) => ({
+        ...((s.bySession && typeof s.bySession === 'object') ? s.bySession : {}),
+        [sessionId]: { ...(((s.bySession && typeof s.bySession === 'object') ? s.bySession[sessionId] : null) || {}), ...patch },
+      })
       const tierOff = tier === 'off'
       // 关闭档 ⇒ **界面也要清干净**（真机 2026-09-22：拨到关闭档后，上一轮的优化上下文还在被注入）。
       // 宿主侧已按政策硬短路 + 清掉缓存里的包；客户端这边同步撤掉拦截浮层与进度，
@@ -2029,7 +2044,7 @@ window.__ModuleLoader__.load({
       const active = isActiveInstance()
       if (!active) return null
 
-      const on = !!(data && data.enabled && s.assist !== 'off')
+      const on = !!(data && data.enabled && eff.assist !== 'off')
       const last = null
       // P11 浮层要显示的那一份：`ovOpen` 是唯一的开关（0.5 的 `store.overlay.open`）。
       // ⚠ 不能写成 `hold || …`——那样"收起为球"在优化中根本收不起来（hold 还活着，面板又冒出来）。
@@ -2123,7 +2138,7 @@ window.__ModuleLoader__.load({
                   name: 'tier', value: tier, options: TIER_KEYS, label: (k) => tierLabel(k), failTick,
                   title: L('优化档位：关闭 / 轻度 / 标准 / 重度 —— 点击、按住拖动、或按 ←→ 方向键（Home/End 到两端）',
                     'Optimizer tier: Off / Low / High / Ultra — click, drag, or press the ←→ arrow keys (Home/End for the ends)'),
-                  onPick: (v) => save({ tier: v }),
+                  onPick: (v) => save({ bySession: withSession({ tier: v }) }),
                 })),
               // ② 优化权限：档位 off 时禁用
               h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('权限', 'Permission')),
@@ -2315,7 +2330,7 @@ window.__ModuleLoader__.load({
     function SettingsTab() {
       useLocaleLive()                                  // 语言是活的：DSH 里切语言 ⇒ 立刻换文案
       useThemeLive()                                   // 主题也是活的：切深浅色 ⇒ 立刻换配色
-      const [status, refresh] = useStatus()
+      const [status, refresh] = useStatus(sessionId)
       const [turns] = useTurns(3)
       const data = status.data
       return h('div', { ...themeAttrs(), 'data-po06': 'settings', style: { fontSize: '13px' } },

@@ -18,6 +18,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SYSTEM_PROMPT } from './interpreter.js'
 import { parseEnableIntent } from './assembly-gate.js'
+import { effectiveSettings } from './policy.js'
 import { normalizeSettings, describeSettings, writeSettings, SETTINGS_KEYS, parseJsonText } from './settings.js'
 
 export const API_PREFIX = '/po06/api'
@@ -351,6 +352,11 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         const raw = readJsonSafe(cfgPath)
         const intent = parseEnableIntent(readTextSafe(cfgPath))
         const norm = normalizeSettings(raw || {})
+        // 会话级档位（0.7.7）：带上 ?session= 时，额外给出**该会话实际生效**的档位与描述。
+        // 全局的 settings/described 原样保留（它们是"这台机器的默认"），
+        // 界面据此显示当前会话的值、并在改档时只写该会话的覆盖。
+        const qsid = String(query.get('session') || '').trim()
+        const sessEff = qsid ? effectiveSettings(raw || {}, qsid) : null
         const prompt = resolvePrompt({ home: H })
         return send(200, {
           ok: true, version, home: H,
@@ -371,6 +377,10 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
           gate: typeof gateSummary === 'function' ? (() => { try { return gateSummary() } catch { return null } })() : null,
           ours: intent.ours, reason: intent.reason || null,
           settings: norm.settings, described: describeSettings(norm.settings),
+          // 会话生效值（无 ?session= 时为 null）：界面用它显示"本会话的档位"
+          sessionId: qsid || null,
+          sessionEffective: sessEff ? { tier: sessEff.tier, assist: sessEff.assist, detail: sessEff.detail, budget: sessEff.budget } : null,
+          sessionDescribed: sessEff ? describeSettings(sessEff) : null,
           // ⚠ 启动闸门自己的字段（enabled / rollout / settingsVersion）**不是**"不认识的字段"，
           // 只是不属于**设置**白名单。真实宿主实测（EV-0141）时它们被当成 problems 报给界面，
           // 界面会显示"配置里有 3 处不规范"——**假警报**，用户会以为自己把配置写坏了。
