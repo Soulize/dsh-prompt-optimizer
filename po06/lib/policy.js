@@ -11,7 +11,7 @@
 //
 // ⚠ 边界说明（不要读成更多）：`budget` 目前**只**映射到"澄清提问配额"，
 // 返工门（P6）的生产触发本来就是默认关闭的，不因为档位而打开——档位不该悄悄放大自主权。
-import { normalizeSettings, tierOf } from './settings.js'
+import { normalizeSettings, tierOf, TIER_PRESETS } from './settings.js'
 import { strategyForTier } from './strategy.js'
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -46,7 +46,16 @@ export function effectiveSettings(settings, sessionId) {
   const s = normalizeSettings(settings).settings
   const sid = (sessionId === undefined || sessionId === null) ? '' : String(sessionId)
   const ov = (sid && s.bySession && typeof s.bySession === 'object') ? s.bySession[sid] : null
-  return ov ? { ...s, ...ov, bySession: s.bySession } : s
+  if (!ov) return s
+  // 档位别名在**读取时**展开（存储里只留意图，见 settings.js 的说明）：
+  // 预设当基底、显式项优先。这样连续点档位不会带上上一次的展开残留——那正是"点了不生效"的根因。
+  let eff = ov
+  if (typeof ov.tier === 'string' && TIER_PRESETS[ov.tier]) {
+    const explicit = { ...ov }
+    delete explicit.tier
+    eff = { ...TIER_PRESETS[ov.tier], ...explicit, tier: ov.tier }
+  }
+  return { ...s, ...eff, bySession: s.bySession }
 }
 
 export function policyFor(settings, sessionId) {
@@ -56,6 +65,8 @@ export function policyFor(settings, sessionId) {
     model: s.model,
     detail: s.detail,
     budget: s.budget,
+    // 0.7.8 协作基调：`neutral` 不注入任何东西，`hard` 由编译器加一段语域匹配的短块。
+    framing: s.framing,
     injectPacket: s.assist !== 'off',
     packetBudgetChars: DETAIL_BUDGET[s.detail],
     maxQuestions: BUDGET_QUESTIONS[s.budget],

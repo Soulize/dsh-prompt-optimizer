@@ -28,9 +28,11 @@ import {
   createStats, createProjectionDefinition, commitPatch, PROJECTION_KEY, STATE_EVENT,
 } from './projection.js'
 import { recordUserInput } from './reducer.js'
+// 0.7.8 单轮提升：任务类检查项（完成前自检）。见 playbook.js 顶部说明其边界。
+import { playbookItems } from './playbook.js'
 import { createState } from './schema.js'
 import { handleUserInput } from './pipeline.js'
-import { SYSTEM_PROMPT, buildUserMessage } from './interpreter.js'
+import { SYSTEM_PROMPT, buildUserMessage, HARD_NOTE_SYSTEM } from './interpreter.js'
 import { TOOLS_SYSTEM_NOTE } from './read-tools.js'
 import { drain } from './eval-llm.js'
 import { createStateStore, inheritStateForFork } from './store.js'
@@ -608,7 +610,7 @@ export function syncBashTool(ctx) {
 }
 
 /** 组装这次解释要用的 system：用户覆盖优先，拼上工具说明、（可选）会话上下文、以及**档位策略**。 */
-function buildInterpreterSystem({ home, observerText, toolsEnabled, strategy }) {
+function buildInterpreterSystem({ home, observerText, toolsEnabled, strategy, framing }) {
   const base = resolvePrompt({ home }).text
   // 顺序即阅读顺序：先工具用法（"怎么查"），再会话上下文（"已经发生了什么"），最后是原话。
   // 两者都为空 ⇒ 与旧行为**逐字节相同**（这是"默认路径不变"那条约束的落点）。
@@ -625,6 +627,8 @@ function buildInterpreterSystem({ home, observerText, toolsEnabled, strategy }) 
     const lines = strategyInstructions(strategy)
     if (lines.length > 0) parts.push('\n\n【本轮策略（由档位决定，不是新增需求）】\n' + lines.join('\n'))
   }
+  // 0.7.8 · 硬邦邦：**只在选中该档时**要求模型产出加码；其它档一个字都不加（旧行为逐字节不变）。
+  if (framing === 'hard' && typeof HARD_NOTE_SYSTEM === 'string') parts.push(HARD_NOTE_SYSTEM)
   if (observerText) parts.push('\n\n' + observerText)
   return parts.join('')
 }
@@ -923,6 +927,11 @@ async function runProductionInput(ctx, session, message, { trigger = 'user-messa
     // 补充程度 → 意图包预算：pipeline 从 `adapter.packetBudget` 取（它本来就是这么设计的）。
     // 设置是**按 home** 的、不按会话，所以写在这里是安全的（不存在"两个会话各要不同预算"的情形）。
     adapter.packetBudget = pol.packetBudgetChars
+    // 0.7.8：本轮任务类检查项。命中任务类才发（宁可漏发，不要错发），条数随补充程度缩放。
+    // 放在这里而不是 pipeline 里：只有这里**同时**拿得到用户原话与生效档位。
+    adapter.checkItems = playbookItems(text, { detail: pol.detail, sessionId: String(session && session.id || '') })
+    // 0.7.8：协作基调（普通 / 硬邦邦）。只有显式选硬邦邦时才注入那段语域块。
+    adapter.framing = pol.framing
     // P11：这一轮**真正喂进解释层的上下文**要能被解析阶段读到（短消息的引文可以来自上下文）。
     let renderedCtx = ''
     const out = await adapter.handleInput(session, {
@@ -948,10 +957,10 @@ async function runProductionInput(ctx, session, message, { trigger = 'user-messa
         // 不记的话，"这一轮解析不到 cwd"的会话会在整条会话里永远用不上工具。
         if (cwd) sessionHistory.setCwd(sessionId, cwd)
         const tools = readToolsFor({ readTools: pol.readTools, cwd: cwd || sessionHistory.getCwd(sessionId) })
-        const sys = buildInterpreterSystem({ home: DSH_HOME, observerText: rendered.text, toolsEnabled: tools.enabled, strategy: pol.strategy })
+        const sys = buildInterpreterSystem({ home: DSH_HOME, observerText: rendered.text, toolsEnabled: tools.enabled, strategy: pol.strategy, framing: pol.framing })
         // 回落用：**同一份上下文、但不带工具说明**的系统提示词（见 interpretViaLlm 里的回落注释）
         const sysNoTools = tools.enabled
-          ? buildInterpreterSystem({ home: DSH_HOME, observerText: rendered.text, toolsEnabled: false, strategy: pol.strategy })
+          ? buildInterpreterSystem({ home: DSH_HOME, observerText: rendered.text, toolsEnabled: false, strategy: pol.strategy, framing: pol.framing })
           : sys
         renderedCtx = String(rendered.text || '')      // 供解析阶段校验"引文来自上下文"
         const um = buildUserMessage({ userText, state, sessionId, messageId: mid, observations, context: rendered.text, retryEmpty, emptyReason })

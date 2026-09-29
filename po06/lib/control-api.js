@@ -13,7 +13,7 @@
 //   ② 出现 `Origin` 时其 host 必须是 loopback——挡跨站；
 //   ③ **写操作必须带自定义头 `x-po06: 1`**：自定义头会触发 CORS 预检，而我们**从不**回 CORS 头
 //      ⇒ 跨站写在预检阶段就被浏览器拦掉（同源页面不受影响）。这一条是"最小代价的 CSRF 防线"。
-import { readFileSync, writeFileSync, existsSync, renameSync, rmSync, copyFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync, existsSync, renameSync, rmSync, copyFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SYSTEM_PROMPT } from './interpreter.js'
@@ -348,6 +348,18 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
           register: toolState ? { last: toolState.last, seen: toolState.seen } : null,
         })
       }
+      // 界面取证（临时）：记录浏览器实际发来的读写，用于判定"点击没反应"卡在哪一环。
+      // 写到独立文件而不是 wire 台账：形状简单、可直接读、不影响既有台账消费方。
+      const traceApi = (rec) => {
+        try {
+          const p = join(H, 'po06-api-trace.jsonl')
+          let cur = ''
+          try { cur = readFileSync(p, 'utf8') } catch { cur = '' }
+          const lines = cur.split('\n').filter(Boolean)
+          const keep = lines.slice(-400).concat(JSON.stringify({ at: new Date().toISOString(), ...rec }))
+          writeFileSync(p, keep.join('\n') + '\n', 'utf8')
+        } catch { /* best effort */ }
+      }
       if (method === 'GET' && path === API_PREFIX + '/status') {
         const raw = readJsonSafe(cfgPath)
         const intent = parseEnableIntent(readTextSafe(cfgPath))
@@ -357,6 +369,11 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         // 界面据此显示当前会话的值、并在改档时只写该会话的覆盖。
         const qsid = String(query.get('session') || '').trim()
         const sessEff = qsid ? effectiveSettings(raw || {}, qsid) : null
+        // ⚠ 档位必须用**推导值**（describeSettings 内部走 tierOf），不能用合并对象里的 `tier` 字段：
+        //   那个字段只是覆盖里写进来的别名原样，不代表实际生效的档位。
+        //   实测过这个坑：覆盖写了 tier=heavy 而三项没展开时，界面会显示"重度"，行为却是 standard。
+        const sessDesc = sessEff ? describeSettings(sessEff) : null
+        traceApi({ k: 'status', sid: qsid || null, tier: sessDesc ? sessDesc.tier : null, ua: String(req.headers['user-agent'] || '').slice(0, 40) })
         const prompt = resolvePrompt({ home: H })
         return send(200, {
           ok: true, version, home: H,
@@ -379,8 +396,10 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
           settings: norm.settings, described: describeSettings(norm.settings),
           // 会话生效值（无 ?session= 时为 null）：界面用它显示"本会话的档位"
           sessionId: qsid || null,
-          sessionEffective: sessEff ? { tier: sessEff.tier, assist: sessEff.assist, detail: sessEff.detail, budget: sessEff.budget } : null,
-          sessionDescribed: sessEff ? describeSettings(sessEff) : null,
+          sessionEffective: sessEff
+            ? { tier: sessDesc.tier, assist: sessEff.assist, detail: sessEff.detail, budget: sessEff.budget, framing: sessEff.framing || 'neutral' }
+            : null,
+          sessionDescribed: sessDesc,
           // ⚠ 启动闸门自己的字段（enabled / rollout / settingsVersion）**不是**"不认识的字段"，
           // 只是不属于**设置**白名单。真实宿主实测（EV-0141）时它们被当成 problems 报给界面，
           // 界面会显示"配置里有 3 处不规范"——**假警报**，用户会以为自己把配置写坏了。
@@ -426,6 +445,11 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
       if (method === 'POST' && path === API_PREFIX + '/settings') {
         const body = await readBody(req)
         if (!body.ok) return send(400, { ok: false, reason: body.reason })
+        try {
+          const v = body.value || {}
+          traceApi({ k: 'settings', keys: Object.keys(v), by: v.bySession ? Object.keys(v.bySession) : null,
+            tier: v.bySession ? Object.values(v.bySession).map((x) => x && x.tier).filter(Boolean) : null })
+        } catch { /* best effort */ }
         const r = writeSettings({ path: cfgPath, patch: body.value || {}, now: now() })
         // 写盘成功 ⇒ 立刻通知宿主按**新政策**处理（作废政策缓存 / 清掉不该再注入的包 / 作废启用闸门）。
         // 钩子抛错**不得**把这次成功的写入回报成失败（文件已经写进去了，谎报失败更糟）：如实带上 hookError。

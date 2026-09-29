@@ -1,4 +1,4 @@
-# dsh-prompt-optimizer **v0.7.6** · Prompt Optimizer (DSH Web plugin)
+# dsh-prompt-optimizer **v0.7.8** · Prompt Optimizer (DSH Web plugin)
 
 **English** ｜ [中文](README.md)
 
@@ -26,10 +26,10 @@ showpiece-quality.
 >
 > Looking for versions 0.1–0.6? See [`old/`](old/README.md) (per-generation notes and download methods).
 > Want to publish a release yourself? See [`docs/RELEASING.md`](docs/RELEASING.md) (9-step procedure + checklist).
-> ### Install 0.7.6 in 30 seconds
+> ### Install 0.7.8 in 30 seconds
 >
 > ```powershell
-> $v = '0.7.6'; $d = "$env:USERPROFILE\Downloads"
+> $v = '0.7.8'; $d = "$env:USERPROFILE\Downloads"
 > Invoke-WebRequest "https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/download/v$v/dsh-external-dsh-po06-$v.tgz" -OutFile "$d\dsh-external-dsh-po06-$v.tgz"
 > Get-Content "$d\SHA256SUMS-$v.txt"     # compare the sha256 with the tgz you just downloaded (same file as on the Release page)
 > dsh --profile po061 --from-default-profile web --dump-config        # a clean profile
@@ -142,7 +142,7 @@ theme** as well, switching live.
   consumption and save cost**.
 - ⚠️ **The capability is still experimental** — treat it as something you can install, try, and switch off at any time,
   **not as an upgrade**.
-- 📌 What `0.7.6` fixes (all real-machine reports): ① "thinking finished but no packet" (empty results are
+- 📌 What `0.7.8` fixes (all real-machine reports): ① "thinking finished but no packet" (empty results are
   backfilled ⇒ every round yields a packet); ② light mode now drives colours from the theme; ③ UI language follows DSH;
   ④ the enable decision (`rollout` missing/misspelled no longer silently disables an explicit `enabled:true`);
   ⑤ data loss where one settings write reset the whole config (UTF-8 BOM read fix). Details: [`CHANGELOG.md`](CHANGELOG.md).
@@ -151,7 +151,7 @@ theme** as well, switching live.
 
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md) ｜ manual acceptance: [`po06/HUMAN-TEST.md`](po06/HUMAN-TEST.md) ｜
   release log (including every install drill actually run): [`po06/RELEASE-CHECKLIST.md`](po06/RELEASE-CHECKLIST.md)
-- Install and self-check: [`po06/README.md`](po06/README.md) ｜ current Release: **[v0.7.6](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.7.6)**
+- Install and self-check: [`po06/README.md`](po06/README.md) ｜ current Release: **[v0.7.8](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.7.8)**
 - Compatibility: `dsh-0.1.6-alpha.1` (`0.1.5-rc.1` also runs) ｜ author: 啃轮胎的西狐
 - **Previous generation (the 0.5 line — still usable, no longer updated)**: a **different package**,
   `@dsh-external/dsh-prompt-optimizer`, last published `v0.5.0-beta.1`; design and usage in [`SPEC.md`](SPEC.md),

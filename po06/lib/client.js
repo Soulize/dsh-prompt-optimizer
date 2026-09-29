@@ -257,6 +257,21 @@ window.__ModuleLoader__.load({
     // ── 把任何失败都变成"人话" ────────────────────────────────────────
     // 已知原因给固定说法，未知原因截断到一行——**绝不允许 raw 异常冒到界面**。
     const briefly = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 120)
+    /**
+     * 宿主尚未加载该项时的**可执行**提示（2026-09-27）。
+     *
+     * 现象：设置其实写成功了（ok:true），但 problems 里有 not-session-scoped / unknown-field，
+     * 界面按默认回退 —— 用户看到的是「已保存，但…按默认处理」，然后值自己弹回去，像坏了一样。
+     * 真因几乎总是**宿主仍跑旧模块**（热重载只清 1 个模块，依赖仍走缓存）。
+     * 与其让用户面对一个静默回退，不如直接说清该怎么办。
+     */
+    function staleSchemaHint(problems) {
+      const hit = (problems || []).some((x) => /not-session-scoped|unknown-field/.test(String((x && x.kind) || ''))
+        || /^bySession\[/.test(String((x && x.key) || '')))
+      return hit
+        ? L('（当前宿主还没加载这一项：重启 DSH 后生效）', ' (the host has not loaded this setting yet — restart DSH)')
+        : ''
+    }
     function reasonText(reason) {
       const raw = briefly(reason)
       const http = /^http-(\d+)$/.exec(raw)
@@ -750,10 +765,14 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       h('circle', { cx: 8.5, cy: 12, r: 1.5, fill: 'currentColor' }))
     }
 
-    function ControlForm({ status, refresh }) {
+    function ControlForm({ status, refresh, sessionId }) {
       const [busy, setBusy] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
       const s = (status && status.settings) || {}
+      // 会话级档位（0.7.8）：这三个控件显示【本会话生效值】，写入写进【本会话的覆盖】。
+      // 必须在本组件内定义：ControlForm 与 ControlBar 是两个独立作用域，
+      // 早先误把 ControlBar 的 eff/withSession 用到这里 ⇒ 渲染期未定义 ⇒ 面板调不动。
+      const eff = (status && status.sessionEffective) || s
       const [catalog, setCatalog] = React.useState({ models: [], problems: [] })
       React.useEffect(() => {
         let live = true
@@ -773,22 +792,29 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         const probs = (r.problems || []).filter((x) => x.kind !== 'unknown-field')
         setMsg({ kind: probs.length ? 'warn' : 'ok',
           text: probs.length
-            ? L('已保存，但有 ','Saved, but ') + probs.length + L(' 项不认识的值，已按默认处理：',' unrecognized value(s) were handled as defaults: ') + probs.map((x) => x.key + '=' + JSON.stringify(x.got)).join('、')
+            ? L('已保存，但有 ','Saved, but ') + probs.length + L(' 项被按默认处理',' value(s) were handled by default') + staleSchemaHint(r.problems) + L('：',': ') + probs.map((x) => x.key + '=' + JSON.stringify(x.got)).join('、')
             : L('已保存','Saved') + (r.backup ? L('（旧配置已备份）',' (old config backed up)') : '') })
         if (refresh) refresh()
+      }
+      // 没有会话（例如未打开会话的设置页）就退回全局写入，保持老行为可用。
+      const saveTier = (patch) => {
+        const sid = (sessionId === undefined || sessionId === null) ? '' : String(sessionId)
+        if (!sid) return save(patch)
+        const all = (s.bySession && typeof s.bySession === 'object') ? s.bySession : {}
+        return save({ bySession: { ...all, [sid]: { ...(all[sid] || {}), ...patch } } })
       }
       return h('div', { 'data-po06': 'controls' },
         h('div', { style: S.row },
           h('span', { style: S.label }, L('辅助','Assist')),
-          h(Options, { value: eff.assist, options: ['off', 'auto'], labels: ASSIST_LABELS, onChange: (v) => save({ bySession: withSession({ assist: v }) }) }),
+          h(Options, { value: eff.assist, options: ['off', 'auto'], labels: ASSIST_LABELS, onChange: (v) => saveTier({ assist: v }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('补充程度','Detail')),
-          h(Options, { value: eff.detail, options: ['minimal', 'standard', 'detailed'], labels: DETAIL_LABELS, onChange: (v) => save({ bySession: withSession({ detail: v }) }) }),
+          h(Options, { value: eff.detail, options: ['minimal', 'standard', 'detailed'], labels: DETAIL_LABELS, onChange: (v) => saveTier({ detail: v }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('自主预算','Autonomy')),
-          h(Options, { value: eff.budget, options: ['minimal', 'standard', 'generous'], labels: BUDGET_LABELS, onChange: (v) => save({ bySession: withSession({ budget: v }) }) }),
+          h(Options, { value: eff.budget, options: ['minimal', 'standard', 'generous'], labels: BUDGET_LABELS, onChange: (v) => saveTier({ budget: v }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('解释层模型','Explainer model')),
@@ -1575,6 +1601,17 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         ...((s.bySession && typeof s.bySession === 'object') ? s.bySession : {}),
         [sessionId]: { ...(((s.bySession && typeof s.bySession === 'object') ? s.bySession[sessionId] : null) || {}), ...patch },
       })
+      // 协作基调（0.7.8）：会话覆盖优先，其次全局，默认 neutral。
+      // 与档位**正交**——可以「轻度 + 硬邦邦」，也可以「重度 + 普通」。
+      const framing = (eff && (eff.framing === 'hard' || eff.framing === 'neutral')) ? eff.framing : 'neutral'
+      // 点档位 = 整份替换该会话覆盖（避免带上陈旧展开值），但**必须保留已选的协作基调**：
+      // 基调与档位是两件事，换档位不该把基调一起抹掉。
+      const replaceTier = (t) => {
+        const all = (s.bySession && typeof s.bySession === 'object') ? s.bySession : {}
+        const prev = all[sessionId] || {}
+        const keep = (prev.framing === 'hard' || prev.framing === 'neutral') ? { framing: prev.framing } : {}
+        return { ...all, [sessionId]: { ...keep, tier: t } }
+      }
       const tierOff = tier === 'off'
       // 关闭档 ⇒ **界面也要清干净**（真机 2026-09-22：拨到关闭档后，上一轮的优化上下文还在被注入）。
       // 宿主侧已按政策硬短路 + 清掉缓存里的包；客户端这边同步撤掉拦截浮层与进度，
@@ -1607,7 +1644,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         }
         const probs = (r.problems || []).filter((x) => x.kind !== 'unknown-field')
         setMsg(probs.length
-          ? { kind: 'warn', text: L('已保存，但有 ' + probs.length + ' 项被按默认处理', 'Saved, but ' + probs.length + ' value(s) fell back to defaults') }
+          ? { kind: 'warn', text: L('已保存，但有 ' + probs.length + ' 项被按默认处理', 'Saved, but ' + probs.length + ' value(s) fell back to defaults') + staleSchemaHint(r.problems) }
           : { kind: 'ok', text: L('已保存', 'Saved') })
         refreshStatus()                                 // 成功后重新拉一次，界面与后端一致
       }
@@ -2031,12 +2068,23 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
             'Applies only to this explainer model; the levels listed are its own')
           : L('该模型未暴露可选档位，将按服务端默认档运行',
             'This model exposes no selectable effort; the provider default applies')
+        // ⚠ 没有可选档位时**不要再渲染一个能点的下拉**（2026-09-27 实测）：
+        //   宿主对某些模型（如 top-api/gpt-6-astra）根本没登记 reasoning，resolveModelInfo 里没有
+        //   `reasoning.efforts` ⇒ 这里 efforts = []。此前仍渲染出只有「默认（不指定）」的可点下拉，
+        //   用户点它当然没反应，观感就是"档位点了不动"。真实原因只是**这个模型没有档位**。
+        //   所以：禁用 + 就地写明原因（不能只放在 title 里——没人会去悬停）。
+        const noEfforts = efforts.length === 0
         const sel = h('select', {
           'data-po06': 'effort', 'data-po06-value': curEffort, value: curEffort,
-          style: { ...S.optSelect, colorScheme: themeIsDark() ? 'dark' : 'light' },
-          title, onChange: onPick,
+          style: { ...S.optSelect, colorScheme: themeIsDark() ? 'dark' : 'light',
+            ...(noEfforts ? { opacity: .5, cursor: 'default' } : null) },
+          title, onChange: onPick, disabled: noEfforts,
         }, opts)
-        return h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('思考档位', 'Thinking effort')), sel)
+        return h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('思考档位', 'Thinking effort')),
+          noEfforts
+            ? h('span', { 'data-po06': 'effort-none', style: S.muted },
+              L('该模型没有档位（宿主未登记 reasoning）', 'No levels for this model (host has no reasoning info)'))
+            : sel)
       })()
       const modelProblems = Array.isArray(cat.problems) ? cat.problems : []
 
@@ -2138,7 +2186,19 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
                   name: 'tier', value: tier, options: TIER_KEYS, label: (k) => tierLabel(k), failTick,
                   title: L('优化档位：关闭 / 轻度 / 标准 / 重度 —— 点击、按住拖动、或按 ←→ 方向键（Home/End 到两端）',
                     'Optimizer tier: Off / Low / High / Ultra — click, drag, or press the ←→ arrow keys (Home/End for the ends)'),
-                  onPick: (v) => save({ bySession: withSession({ tier: v }) }),
+                  // ⚠ 点档位 = **整份替换**该会话的覆盖，不能与旧覆盖合并：
+                  //   合并会把上一次的 assist/detail/budget 残留带进来，读取时它们会盖过新预设，
+                  //   表现为"点了档位但档位不变"（用户实测 2026-09-27）。
+                  onPick: (v) => save({ bySession: replaceTier(v) }),
+                })),
+              // ①b 协作基调（0.7.8）：与档位正交，按会话存。语域本身就是效果来源（见 framing.js）。
+              h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('协作基调', 'Tone')),
+                h(Segmented, {
+                  name: 'framing', value: framing, options: ['neutral', 'hard'], failTick,
+                  label: (k) => (k === 'hard' ? L('硬邦邦', 'Hard') : L('普通', 'Plain')),
+                  title: L('硬邦邦：用更直接、更来劲的语气推动执行（不改你的原话，也不放松「不替你拍板」的边界）',
+                    'Hard: a blunter, more driven register (your words stay unchanged and decision boundaries stay intact)'),
+                  onPick: (v) => save({ bySession: withSession({ framing: v }) }),
                 })),
               // ② 优化权限：档位 off 时禁用
               h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('权限', 'Permission')),
@@ -2319,7 +2379,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           ),
           status.error ? h('div', { style: { ...S.muted, color: T('err') } }, L('读状态失败：','Failed to read status: ') + errorText(status.error)) : null,
           h('div', { style: S.h }, L('控制','Controls')),
-          h(ControlForm, { status: data, refresh: refreshStatus }),
+          h(ControlForm, { status: data, refresh: refreshStatus, sessionId }),
           h('div', { style: S.h }, L('解释层提示词','Explainer prompt')),
           h(PromptEditor, { prompt: data && data.prompt, refresh: refreshStatus }),
         ) : null,
@@ -2327,16 +2387,20 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
     }
 
     // ── ② 设置页里的一页（同一套控件）─────────────────────────────────
-    function SettingsTab() {
+    function SettingsTab(props) {
       useLocaleLive()                                  // 语言是活的：DSH 里切语言 ⇒ 立刻换文案
       useThemeLive()                                   // 主题也是活的：切深浅色 ⇒ 立刻换配色
+      // ⚠ 宿主按**标准 props** 注入 `sessionId`（与 ControlBar 同一契约，见 slots.d.ts）。
+      //   此前这个组件漏了形参，函数体里却引用 `sessionId` ⇒ 渲染期 ReferenceError
+      //   ⇒ 设置页整块失效（用户实测：点了没反应、界面不更新）。
+      const { sessionId } = props || {}
       const [status, refresh] = useStatus(sessionId)
       const [turns] = useTurns(3)
       const data = status.data
       return h('div', { ...themeAttrs(), 'data-po06': 'settings', style: { fontSize: '13px' } },
         h('div', { style: S.muted }, 'dsh-prompt-optimizer 0.6 ｜ ' + ((data && data.version) || '') + ' ｜ ' + ((data && data.home) || '')),
         !data ? h('div', { style: S.muted }, status.error ? L('读状态失败：','Failed to read status: ') + errorText(status.error) : '读取中…') : null,
-        data ? h('div', {}, h('div', { style: S.h }, L('控制','Controls')), h(ControlForm, { status: data, refresh })) : null,
+        data ? h('div', {}, h('div', { style: S.h }, L('控制','Controls')), h(ControlForm, { status: data, refresh, sessionId })) : null,
         data ? h('div', {}, h('div', { style: S.h }, L('解释层提示词','Explainer prompt')), h(PromptEditor, { prompt: data.prompt, refresh })) : null,
         h('div', { style: S.h }, L('最近几轮','Recent rounds')),
         h(TurnsList, { turns: turns.data }),

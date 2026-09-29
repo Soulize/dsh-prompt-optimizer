@@ -58,6 +58,21 @@ export const HISTORY_MODES = Object.freeze(['turns', 'full'])
 export const TURNS_MIN = 0
 export const TURNS_MAX = 10
 
+/**
+ * 协作基调（0.7.8）：模型以什么**姿态**执行这一轮。
+ *
+ * 为什么要有这一档（用户 2026-09-27 实测）：把同样的要求用口语、带情绪、带关系感的说法讲出来
+ * （"兄弟""贼拉牛逼""硬邦邦""赶紧搞起"），模型的首轮交付明显好于同等字数、同等信息量的正式说法。
+ * 机制不是模型被"激励"，而是**语域条件化的分布**：正式语域命中"专业助手接正式请求"那一簇
+ * （客套、hedging、模板化、求稳），口语+高唤醒语域命中"哥们帮你把活干出来"那一簇
+ * （直接开干、投入、把成品拿出来）。所以这一档必须**保留语域本身**——
+ * 把它消毒成"请更积极"的正式条目，就恰好把起作用的那部分扔掉了。
+ *
+ * ⚠ 两条边界：① 它只影响工作模型的执行姿态，**不改用户原话**、不升格为要求；
+ *   ② 它**不放松决策边界**——强结果导向最容易带来"懒得问、自己定了"，所以块内必须显式反制。
+ */
+export const FRAMINGS = Object.freeze(['neutral', 'hard'])
+
 /** 默认值：字段**缺失**时用它。字段**写错**时也用它，但会记一条 `problems`（见文件头 ①）。 */
 export const DEFAULT_SETTINGS = Object.freeze({
   assist: 'auto',
@@ -84,6 +99,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ⚠ 只允许档位相关键：`bash`/`model`/`effortByModel`/`permission` 等仍是全局的
   //   （它们是"这台机器怎么跑"，不是"这个会话怎么跑"），越界的键会被归一化丢弃并记问题。
   bySession: {},
+  // 0.7.8：协作基调（普通 / 硬邦邦）。**默认普通**——硬邦邦只在用户显式选择时生效，
+  // 因为它会改变执行姿态（更强推进、更少客套），对正式类任务并不总是合适。
+  framing: 'neutral',
   permission: 'auto',   // P10
   historyMode: 'turns', // P10
   turns: 6,             // P10：回合模式的窗口
@@ -97,7 +115,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 })
 
 /** 允许按会话覆盖的键（档位四件套；其余设置保持全局）。 */
-export const SESSION_KEYS = Object.freeze(['assist', 'detail', 'budget', 'tier'])
+export const SESSION_KEYS = Object.freeze(['assist', 'detail', 'budget', 'tier', 'framing'])
 
 /** 白名单：只有这些键会被读/写。 */
 export const SETTINGS_KEYS = Object.freeze([
@@ -106,6 +124,7 @@ export const SETTINGS_KEYS = Object.freeze([
   'bash',
   'effortByModel',
   'bySession',
+  'framing',
 ])
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -156,7 +175,7 @@ export function normalizeSettings(raw) {
     const v = src.bySession
     if (v === undefined) return {}
     if (!isPlainObject(v)) { problems.push({ key: "bySession", kind: "wrong-type", got: v, used: {} }); return {} }
-    const domains = { assist: ASSIST_MODES, detail: DETAIL_LEVELS, budget: BUDGET_LEVELS, tier: TIER_LEVELS }
+    const domains = { assist: ASSIST_MODES, detail: DETAIL_LEVELS, budget: BUDGET_LEVELS, tier: TIER_LEVELS, framing: FRAMINGS }
     const out = {}
     for (const [sid, ov] of Object.entries(v)) {
       if (typeof sid !== "string" || !sid) continue
@@ -169,6 +188,11 @@ export function normalizeSettings(raw) {
         if (typeof val !== "string" || !domains[k].includes(val)) { problems.push({ key: "bySession[" + sid + "]." + k, kind: "not-in-domain", got: val, used: undefined }); continue }
         clean[k] = val
       }
+      // ⚠ **只存用户写的意图，不在这里展开**（2026-09-27 修，用户实测）：
+      //   早先这里把 `tier` 就地展开成 assist/detail/budget 再存回去。于是第二次点档位时：
+      //   写入 {tier:新档} 会与**上一次展开留下的陈旧三项**合并；读取时那三项又会盖过新预设，
+      //   推导档位不变 ⇒ 界面表现为"点一次正常、之后固定"。
+      //   所以展开挪到**读取时**（policy.js 的 effectiveSettings）：存储里永远只有意图本身。
       if (Object.keys(clean).length) out[sid] = clean
     }
     return out
@@ -199,6 +223,7 @@ export function normalizeSettings(raw) {
     model: null,
     effortByModel: pickEffortMap(),
     bySession: pickSessionMap(),
+    framing: pick('framing', FRAMINGS, DEFAULT_SETTINGS.framing),
     permission: pick('permission', PERMISSIONS, DEFAULT_SETTINGS.permission),
     historyMode: pick('historyMode', HISTORY_MODES, DEFAULT_SETTINGS.historyMode),
     turns: pickInt('turns', TURNS_MIN, TURNS_MAX, DEFAULT_SETTINGS.turns),
