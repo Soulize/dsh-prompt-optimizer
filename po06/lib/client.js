@@ -199,6 +199,11 @@ window.__ModuleLoader__.load({
         + block('[data-po06][data-po06-theme="dark"]', THEME_TOKENS.dark)   // 标记在自己身上
         + block('[data-po06-theme="dark"] [data-po06]', THEME_TOKENS.dark)  // 标记在祖先上（后代元素）
         + block('[data-ds-dark-theme] [data-po06]', THEME_TOKENS.dark)      // DSH 自己的深色属性
+        // ⚠ 浅色必须**显式**写、而且放在最后（2026-09-30 用户：「只有黑色模式」）：
+        //   上面那条「祖先深色 ⇒ 后代深色」与它是**同权重**，只能靠先后顺序决胜；
+        //   少了这两条，一个声明了 light 的卡片落在深色祖先里就再也翻不回浅色。
+        + block('[data-po06][data-po06-theme="light"]', THEME_TOKENS.light)
+        + block('[data-po06-theme="light"] [data-po06]', THEME_TOKENS.light)
     }
 
     // P11 浮层的配色 token：**逐条取自 0.5 的那张 CSS**（0.5:3259-3272 的自定义属性 + 各处的
@@ -232,6 +237,44 @@ window.__ModuleLoader__.load({
       if (v >= 1000000) return (v / 1000000).toFixed(2) + 'M'
       if (v >= 1000) return (v / 1000).toFixed(1) + 'k'
       return String(v)
+    }
+    /**
+     * 用量归一化（**容错**）：既认归一化后的 `{in,out,cache,total}`，也认 provider 原始字段。
+     *
+     * 为什么必须容错（2026-10-01 真机 bug）：同一个页脚会从两条路拿到用量——
+     *   · `presentationMeta.usage`：宿主侧已用 advisor.js 的 usageParts() 归一化过；
+     *   · `run.result.usage`（进度记录）：那是 **provider 原始字段**
+     *     `{inputTokens,outputTokens,cacheReadTokens,totalTokens}`。
+     * 卡片原先优先取后者 ⇒ usageText 认的四个键全 undefined ⇒ 页脚恒显 `Σ — tok`。
+     * 修在格式化的入口（而不是各调用点）：这样**已经落盘的旧记录**也一并修好，不必重跑咨询。
+     * 只做字段改名，**不折算、不估算**：拿不到的项仍然是 null → 显示 `—`。
+     */
+    const normalizeUsage = (u) => {
+      if (!u || typeof u !== 'object') return null
+      const num = (...keys) => {
+        for (const k of keys) if (typeof u[k] === 'number' && Number.isFinite(u[k])) return u[k]
+        return null
+      }
+      const inp = num('in', 'inputTokens', 'prompt_tokens', 'promptTokens', 'uncachedInputTokens')
+      const out = num('out', 'outputTokens', 'completion_tokens', 'completionTokens')
+      const cache = num('cache', 'cacheReadTokens', 'cachedTokens', 'cached_tokens', 'prompt_cache_hit_tokens')
+      const t0 = num('total', 'totalTokens', 'total_tokens')
+      // 合计**只认 provider 给的**；没给就不替它算（保持“不估算”口径，宁可显示 —）。
+      const total = t0
+      if (inp == null && out == null && cache == null && total == null) return null
+      return { in: inp, out, cache, total }
+    }
+    /**
+     * 用量文案：**只显示 provider 真给的字段，不折算、不估算**（拿不到的项显示 `—`）。
+     * 解释层的拦截浮层与顾问卡片页脚共用同一套口径（2026-09-30 抽出，原先只有浮层里那份内联实现）。
+     */
+    const usageText = (rawUsage, withTotal) => {
+      const u = normalizeUsage(rawUsage)
+      if (!u) return 'Σ — tok'
+      return (withTotal && u.total != null ? 'Σ ' + fmtTok(u.total) + ' tok | ' : 'Σ ') + L('入', 'in') + ' ' + fmtTok(u.in)
+        + ' · ' + L('出', 'out') + ' ' + fmtTok(u.out)
+        + ' · ' + L('缓存', 'cache') + ' ' + fmtTok(u.cache)
+        + ' tok'
     }
 
     // ── 与宿主 API 的薄封装 ───────────────────────────────────────────
@@ -1319,14 +1362,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
                 // 于是这里只显示 provider 真给的字段：`in 1234 · out 567 · cache 890 tok`；
                 // 拿不到的项显示 `—`（不折算、不猜）。
                 // 用量来源：**结果优先**（拦截结束后仍在），其次才是进行中的进度面。
-                (() => {
-                  const u = (hold && hold.usage) ? hold.usage : ((prog && prog.usage) ? prog.usage : null)
-                  if (!u || (u.in == null && u.out == null && u.cache == null && u.total == null)) return 'Σ — tok'
-                  return 'Σ ' + L('入', 'in') + ' ' + fmtTok(u.in)
-                    + ' · ' + L('出', 'out') + ' ' + fmtTok(u.out)
-                    + ' · ' + L('缓存', 'cache') + ' ' + fmtTok(u.cache)
-                    + ' tok'
-                })()),
+                usageText((hold && hold.usage) ? hold.usage : ((prog && prog.usage) ? prog.usage : null))),
               // 拦截来路（回车 / 按钮 / 重新生成）：原来那块手写面板上有，真机排障时要看（保留，不新增真相）
               h('span', { 'data-po06': 'intercept-via', style: S.ovChipMuted },
                 hold.via === 'key' ? L('回车拦截', 'Enter')
@@ -1658,6 +1694,17 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       permissionRef.current = permission
       const canArm = !!(inputActions && typeof inputActions.submit === 'function' && sessionId)
       canArmRef.current = canArm
+      // 斜杠命令放行（0.8）：名单来自设置，但**只有宿主确认该命令当前已注册**才会出现在 active 里。
+      // 拿不到清单、没列、没注册 ⇒ 一律交还宿主（旧行为）——我们不认识这条命令，就绝不接管它。
+      const slashActive = (() => {
+        const rows = (data && data.slashReview && Array.isArray(data.slashReview.active)) ? data.slashReview.active : []
+        return new Set(rows.map((n) => String(n).toLowerCase()))
+      })()
+      const slashNameOf = (t) => {
+        const m = /^\/([A-Za-z0-9][A-Za-z0-9_-]*)(\s|$)/.exec(String(t == null ? '' : t))
+        return m ? m[1].toLowerCase() : null
+      }
+      const slashAllowedDraft = (t) => slashReviewAllowed([...slashActive], t)
 
       const clearHoldSoon = () => { window.setTimeout(() => { holdRef.current = null; setHold(null) }, 1600) }
       /** 放行：**先把拦下的那条原话写回草稿**，再交给宿主的 submit。
@@ -1667,7 +1714,13 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
        *  所以这里无条件对齐一次（草稿本来就一样时，写回是幂等的）。 */
       const releaseHold = (text, h, mark) => {
         try {
-          if (typeof inputActions.setDraft === 'function') inputActions.setDraft(text)
+          // 名单内命令的守门（0.8）：审查浮层可以改内容，但**不允许把命令本身换掉**。
+          // 换掉就不再是原命令了 ⇒ 退回用户按下发送时的那一条原话，交还宿主自行处理。
+          let outgoing = text
+          const held = h && typeof h.text === 'string' ? h.text : ''
+          const heldName = slashNameOf(held)
+          if (heldName && slashActive.has(heldName) && slashNameOf(outgoing) !== heldName) outgoing = held
+          if (typeof inputActions.setDraft === 'function') inputActions.setDraft(outgoing)
           inputActions.submit()
           setHold({ ...(h || {}), phase: mark || 'sent' })
           clearHoldSoon()
@@ -1945,7 +1998,8 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           if (!focusInComposer(card, e.target)) return 'focus-outside'
           const t = draftNow()
           if (!t) return 'empty-draft'
-          if (t.startsWith('/')) return 'slash-command'          // 命令（/xxx）交还官方
+          // 斜杠命令默认交还官方；**只有名单内且已注册**的命令才继续走拦截（0.8）。
+          if (t.startsWith('/') && !slashAllowedDraft(t)) return 'slash-command'
           return null
         }
         const wantClick = (btn) => {
@@ -2410,6 +2464,301 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       )
     }
 
+    // Advisor views share the keyed tool slot with root and PTC subcalls.
+    let AdvisorIcons = {}
+    try { AdvisorIcons = require('@deepseek-ai/dsh-client-ui-primitives') } catch { /* text fallback */ }
+    const advisorIcon = (name, fallback, style) => AdvisorIcons[name]
+      ? h(AdvisorIcons[name], { style: { width: '16px', height: '16px', flexShrink: 0, ...style } })
+      : h('span', { 'aria-hidden': true, style }, fallback)
+    const advisorTerminal = new Set(['done', 'failed', 'cancelled', 'timeout', 'interrupted'])
+    function advisorValueOf(block) {
+      const text = (Array.isArray(block && block.content) ? block.content : [])
+        .filter((b) => b && b.type === 'text').map((b) => b.text || '').join(String.fromCharCode(10))
+      try {
+        const value = JSON.parse(text)
+        return value && typeof value === 'object' ? value : null
+      } catch { return null }
+    }
+    function advisorArgsOf(props, partial) {
+      const block = props.block || {}
+      const raw = props.phase === 'result' ? block.call && block.call.argsRaw : block.argsRaw
+      if (raw && typeof raw === 'object') return raw
+      try { return JSON.parse(raw || partial || '{}') } catch { return {} }
+    }
+    const advisorVerdict = (code) => ({
+      pass: L('通过', 'Passed'), gaps: L('有缺口', 'Gaps found'), unverified: L('未完整验证', 'Unverified'),
+      need_user: L('需要你决定', 'Needs your decision'), continue: L('继续当前路线', 'Continue'),
+      narrow: L('缩小实验', 'Narrow the experiment'), change: L('建议换路线', 'Change approach'),
+    }[code] || L('未给出结论', 'No conclusion'))
+    const advisorStage = (code) => ({
+      prepare: L('准备材料', 'Preparing evidence'), evidence: L('查证中', 'Checking evidence'),
+      thinking: L('思考中', 'Thinking'), conclude: L('生成结论', 'Concluding'), validate: L('核对引用', 'Validating citations'),
+      done: L('已完成', 'Completed'), failed: L('未通过校验', 'Not accepted'),
+      timeout: L('已到时限', 'Time limit reached'), cancelled: L('已取消', 'Cancelled'),
+      interrupted: L('运行已中断', 'Interrupted'),
+    }[code] || L('等待顾问', 'Waiting for advisor'))
+    const advisorReason = (reason) => ({
+      'assist-off': L('本会话的提示词辅助已关闭', 'Assistance is off for this session'),
+      'advisor-invalid-check': L('验收项没有通过证据校验', 'An acceptance check failed evidence validation'),
+      'advisor-invalid-citation': L('报告引用了无法核对的证据', 'The report contains an unverifiable citation'),
+      'advisor-invalid-json': L('顾问未返回完整的结构化报告', 'The advisor did not return a complete report'),
+      'advisor-invalid-report': L('顾问报告格式不完整', 'The advisor report is incomplete'),
+      'advisor-pass-without-evidence': L('缺少通过验收的证据', 'Not enough evidence to pass'),
+      'advisor-timeout': L('咨询已到时限', 'Consultation reached its time limit'),
+      'advisor-cancelled': L('咨询已取消', 'Consultation was cancelled'),
+      'host-restarted': L('宿主重启，中断了这次咨询', 'Host restart interrupted this consultation'),
+      'plugin-unloaded': L('插件卸载，中断了这次咨询', 'Plugin unload interrupted this consultation'),
+    }[reason] || reasonText(reason))
+    function useAdvisorRun(sessionId, callId, runId, settled) {
+      const [state, setState] = React.useState({ run: null, error: null, clock: Date.now() })
+      React.useEffect(() => {
+        let alive = true, timer = null, controller = null
+        setState({ run: null, error: null, clock: Date.now() })
+        if (!sessionId || (!callId && !runId)) return undefined
+        const tick = async () => {
+          controller = new AbortController()
+          let done = false
+          try {
+            const identity = runId ? '&run=' + encodeURIComponent(runId) : '&call=' + encodeURIComponent(callId)
+            const response = await fetch(API + '/advisor-progress?session=' + encodeURIComponent(sessionId) + identity,
+              { cache: 'no-store', signal: controller.signal })
+            if (!response.ok) throw new Error('HTTP ' + response.status)
+            const data = await response.json()
+            if (!alive) return
+            const run = data.run || null
+            done = !!(run && advisorTerminal.has(run.stage))
+            setState({ run, error: null, clock: Date.now() })
+          } catch (e) {
+            if (!alive || e.name === 'AbortError') return
+            setState((s) => ({ ...s, error: String(e.message || e), clock: Date.now() }))
+          }
+          if (alive && !settled && !done) timer = window.setTimeout(tick, 800)
+        }
+        void tick()
+        return () => { alive = false; window.clearTimeout(timer); if (controller) controller.abort() }
+      }, [sessionId, callId, runId, settled])
+      return state
+    }
+    // 进度条上限**优先用本轮记录里的限时**（advisor.js 写进来的），这份常量只是记录缺失时的兜底：
+    // 两份各写一个常量必然漂移（真发生过：限时放宽后进度条仍按旧值画满）。
+    const ADVISOR_MAX_MS = 300000
+    // 进度换算：**纯函数**（可单测）。没在跑、或还没有耗时 ⇒ 不画进度条。
+    const advisorProgressPct = (elapsedSec, running, maxMs) => (running && elapsedSec != null && Number.isFinite(elapsedSec))
+      ? Math.min(0.97, Math.max(0, elapsedSec / ((Number(maxMs) > 0 ? Number(maxMs) : ADVISOR_MAX_MS) / 1000))) : null
+    function advisorDraftReply(draft) {
+      const match = /"summary"\s*:\s*"((?:\\.|[^"\\])*)/.exec(String(draft || ''))
+      if (!match) return ''
+      try { return JSON.parse('"' + match[1] + '"') } catch { return '' }
+    }
+    /**
+     * 斜杠命令是否放行（纯函数，便于单测）：
+     * `active` 是**宿主确认已注册**的命令名清单——配置里列了但当前没注册的不会出现在这里。
+     * 判定要求命令名后紧跟空白或行尾，避免 `/vmakefoo` 被当成 `/vmake`。
+     */
+    function slashReviewAllowed(active, draft) {
+      const set = new Set((Array.isArray(active) ? active : []).map((n) => String(n == null ? '' : n).toLowerCase()).filter(Boolean))
+      if (!set.size) return false
+      const m = /^\/([A-Za-z0-9][A-Za-z0-9_-]*)(\s|$)/.exec(String(draft == null ? '' : draft))
+      return !!(m && set.has(m[1].toLowerCase()))
+    }
+    function AdvisorMaterials({ materials, openFile }) {
+      const statusLabel = row => row.status === 'ready' ? (row.kind === 'image' ? L('已附图像', 'Image attached') : L('已附内容', 'Content attached'))
+        : row.status === 'truncated' ? L('部分内容', 'Partial content') : row.status === 'not-inspected' ? L('未检查图片', 'Image not inspected')
+        : row.status === 'pending' ? L('待准备', 'Pending') : row.status === 'excluded' ? L('本次范围排除', 'Excluded by scope') : L('不可用', 'Unavailable')
+      const reasons = { 'scope-material-excluded': L('不属于本次专项，未读取、未附入', 'Outside this review scope; not read or attached'), 'model-text-only': L('当前模型不支持图像输入', 'Model does not accept images'),
+        'model-image-capability-unknown': L('宿主未确认当前模型的图像能力', 'Image capability is not declared'),
+        'read-tools-disabled-or-no-cwd': L('只读工具未开启或工作目录不可用', 'Read tools are off or workspace is unavailable'),
+        'file-not-found': L('文件不存在', 'File not found'), 'outside-workspace': L('路径不在本会话工作目录内', 'Outside workspace'),
+        'file-too-large': L('材料超过大小限制', 'Material exceeds size limit'), 'attachment-service-unavailable': L('图片附件服务不可用', 'Image attachment service unavailable') }
+      if (!materials.length) return null
+      return h('div', { 'data-po06-advisor-materials': true, style: { marginTop: '14px', minWidth: 0 } },
+        h('div', { style: { color: T('fg3'), fontSize: '11px', marginBottom: '6px' } }, L('本次提供的材料', 'Materials for this consultation') + ' · ' + materials.length),
+        materials.map((row, index) => h('details', { key: row.id || index, 'data-advisor-material': row.id || index,
+          style: { borderTop: '1px solid ' + T('line2'), padding: '7px 0', minWidth: 0 } },
+          h('summary', { style: { cursor: 'pointer', color: T('fg2'), overflowWrap: 'anywhere', fontSize: '12px' } },
+            h('span', { style: { marginRight: '7px', color: T('fg3') } }, row.kind === 'image' ? L('图像', 'Image') : L('文件', 'File')),
+            row.previewAvailable && typeof openFile === 'function' ? h('button', { type: 'button', title: L('在侧栏预览当前文件', 'Preview current file in sidebar'),
+              onClick: e => { e.preventDefault(); e.stopPropagation(); openFile(row.previewPath || row.path) },
+              style: { font: 'inherit', color: T('acc'), background: 'transparent', border: 0, padding: 0, cursor: 'pointer', textAlign: 'left', overflowWrap: 'anywhere' } }, row.path)
+              : h('span', null, row.path),
+            h('span', { style: { fontSize: '11px', marginLeft: '10px', color: row.sent ? T('fg3') : T('warn') } }, statusLabel(row))),
+          h('div', { style: { padding: '7px 0 2px 18px', fontSize: '12px', color: T('fg2'), minWidth: 0 } },
+            h('p', { style: { margin: '0 0 5px', overflowWrap: 'anywhere' } }, row.purpose || L('本次成果', 'Current artifact')),
+            row.reason ? h('p', { style: { margin: '4px 0', color: T('warn') } }, reasons[row.reason] || row.reason) : null,
+            row.sentChars != null ? h('p', { style: { margin: '4px 0', fontSize: '11px', color: T('fg3') } }, L('实际附入 ', 'Attached ') + row.sentChars + ' / ' + row.chars + L(' 字符', ' characters')) : null,
+            row.image ? h('p', { style: { margin: '4px 0', fontSize: '11px', color: T('fg3') } }, row.image.width + ' × ' + row.image.height + (row.image.resized ? L(' · 经宿主缩放', ' · Normalized by host') : '')) : null,
+            row.excerpt ? h('pre', { style: { margin: '7px 0', fontSize: '11px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '160px', overflowY: 'auto' } }, row.excerpt) : null,
+            row.sha256 ? h('p', { style: { margin: '5px 0 0', fontSize: '10px', color: T('fg3'), overflowWrap: 'anywhere' } }, 'SHA256 ' + row.sha256.slice(0, 16) + L(' · 侧栏预览当前文件，可能与咨询时版本不同', ' · Sidebar shows the current file, which may differ from the reviewed version')) : null))))
+    }
+    function AdvisorToolRow(props) {
+      useLocaleLive()
+      // ⚠ 主题也是活的：少了这一行，切到浅色后卡片不会重渲染，标记停在 dark ⇒ 用户看到的
+      //   就是「只有黑色模式」（2026-09-30 实测反馈）。其余面板都调了它，这里此前漏了。
+      useThemeLive()
+      // 本组件自己的会话标识（宿主按 session scope 注入）。定义在本地，避免与其它组件的同名变量混淆。
+      const sessionId = props.sessionId
+      const partial = typeof props.useToolCallArgumentsPartial === 'function' ? props.useToolCallArgumentsPartial() : ''
+      const args = advisorArgsOf(props, partial)
+      const result = props.phase === 'result' ? advisorValueOf(props.block) : null
+      const state = useAdvisorRun(sessionId, props.callId, result && result.uiRunId, props.phase === 'result')
+      const candidate = state.run
+      const run = candidate && candidate.sessionId === String(sessionId)
+        && (result && result.uiRunId ? candidate.runId === result.uiRunId : candidate.callId === String(props.callId)) ? candidate : null
+      const value = (run && run.result) || result
+      const report = value && value.ok === true && value.report ? value.report : null
+      const stage = run ? run.stage : (props.phase === 'result' ? (value && value.ok ? 'done' : 'failed') : 'prepare')
+      const running = props.phase !== 'result' && !advisorTerminal.has(stage)
+      // 运行中默认展开思考：用户要的就是"实时看到思维链"，跑完再收起来才需要多点一次。
+      const [processOpen, setProcessOpen] = React.useState(props.phase !== 'result')
+      const [checksOpen, setChecksOpen] = React.useState(false)
+      const thinkBody = React.useRef(null)
+      const followThink = React.useRef(true)
+      const reasoning = run && run.reasoning || ''
+      React.useEffect(() => {
+        const body = thinkBody.current
+        if (processOpen && body && followThink.current) body.scrollTop = body.scrollHeight
+      }, [reasoning, processOpen])
+      const mode = args.mode || (value && value.mode) || (run && run.mode)
+      const title = mode === 'review_result' ? L('顾问 · 独立验收', 'Advisor · Independent review') : L('顾问 · 失败诊断', 'Advisor · Failure diagnosis')
+      const isPartial = !!(value && value.partial)
+      const status = running ? advisorStage(stage) : isPartial ? L('保留部分内容', 'Partial output')
+        : report ? advisorVerdict(report.verdict) : advisorStage(stage)
+      const tone = report && !isPartial && report.verdict === 'pass' ? T('ok') : running ? T('acc') : T('warn')
+      const elapsed = run ? Math.max(0, ((run.finishedAt || state.clock) - run.startedAt) / 1000)
+        : value && typeof value.ms === 'number' ? value.ms / 1000 : null
+      // 用一个静止的进度条把"还在跑、跑了多久"画出来，比只有一个秒数直观；上限对齐 advisor.js 的 150s，
+      // 且**最多画到 97%**——没结束就不该看起来已经满了。
+      const progress = advisorProgressPct(elapsed, running, run && run.timeoutMs)
+      // 页脚要用的元信息（四分区重写时漏了声明，2026-09-30 由组件树断言抓出 `model is not defined`）。
+      const model = (run && run.model) || (value && value.model) || null
+      const effort = (run && run.effort) || (value && value.reasoningEffort) || null
+      const toolCalls = (run && run.toolCalls != null) ? run.toolCalls : (value && value.toolCalls != null ? value.toolCalls : null)
+      // 这次咨询的 token（结果里的 usage，已由 advisor.js 的 presentationMeta 投影过来）。
+      // ⚠ 这是**插件自己的账**：DSH 顶部那个数字只统计宿主自己发起的调用，这里进不去。
+      const usage = (run && run.result && run.result.usage) || (value && value.usage) || null
+      const question = args.question || (run && run.question) || ''
+      const reviewScope = (run && run.reviewScope) || (value && value.reviewScope) || args.scope || 'general'
+      const focus = (run && run.focus) || (value && value.focus) || args.focus || ''
+      const scopeLabels = { general: L('综合复核', 'General'), geometry: L('几何装配', 'Geometry'), appearance: L('画面表现', 'Appearance'), code: L('代码正确性', 'Code'), interaction: L('交互逻辑', 'Interaction'), performance: L('性能证据', 'Performance'), delivery: L('交付覆盖', 'Delivery coverage'), custom: L('自定义专项', 'Custom') }
+      const coverage = (run && run.coverage) || (value && value.coverage) || null
+      const supplied = [...(Array.isArray(args.artifacts) ? args.artifacts.map(path => ({ path, kind: 'file' })) : []),
+        ...(Array.isArray(args.files) ? args.files.map(x => ({ ...x, kind: 'file' })) : []),
+        ...(Array.isArray(args.images) ? args.images.map(x => ({ ...x, kind: 'image' })) : [])].map(x => ({ ...x, status: 'pending' }))
+      const materials = (run && run.materials) || (value && value.materials) || supplied
+      const draftReply = running && run ? advisorDraftReply(run.draft) : ''
+      const textStyle = { margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'inherit', lineHeight: 1.75 }
+      const labelStyle = { fontSize: '12px', color: T('acc'), fontWeight: 600, letterSpacing: '.02em', marginBottom: '7px' }
+      // 分区题干：**主题色 + 加粗**（用户 2026-09-30 要求「题干更突出」）。
+      // 只在这一处用主题色，其余保持灰阶 ⇒ 卡面仍然克制、灰度下也能分出区块。
+      const sectionHead = (icon, text, extra) => h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '9px', minWidth: 0 } },
+        advisorIcon(icon, '', { color: T('acc'), width: '13px', height: '13px' }),
+        h('span', { style: { fontSize: '12px', color: T('acc'), fontWeight: 600, letterSpacing: '.02em' } }, text), extra || null)
+      const dot = (color, size) => h('span', { 'aria-hidden': true, style: { display: 'inline-block', flexShrink: 0,
+        width: (size || 7) + 'px', height: (size || 7) + 'px', borderRadius: '50%', background: color } })
+      const sectionStyle = { paddingTop: '16px', minWidth: 0 }
+      const disclosureStyle = { cursor: 'pointer', color: T('acc'), fontWeight: 600, fontSize: '12px', letterSpacing: '.02em', padding: '10px 0', outlineOffset: '3px' }
+      const refs = values => h('span', { style: { color: T('fg3'), fontSize: '11px', marginLeft: '8px', overflowWrap: 'anywhere' } },
+        (Array.isArray(values) ? values : []).join(' · '))
+      const checks = report && Array.isArray(report.checks) ? report.checks : []
+      const counts = checks.reduce((out, check) => { out[check.status] = (out[check.status] || 0) + 1; return out }, {})
+      const checkLabels = { satisfied: L('已满足', 'Satisfied'), failed: L('不满足', 'Failed'), unverified: L('待验证', 'Unverified') }
+      const checkSummary = checks.length ? checks.length + L(' 项', ' checks')
+        + (counts.failed ? ' · ' + counts.failed + L(' 项不满足', ' failed') : '')
+        + (counts.unverified ? ' · ' + counts.unverified + L(' 项待验证', ' unverified') : '') : running ? L('尚未验收', 'Pending') : L('无验收项', 'No checks')
+      return h('section', { ...themeAttrs(), 'data-po06': 'advisor-tool', 'data-advisor-call': props.callId,
+        style: { width: '100%', boxSizing: 'border-box', minWidth: 0, border: '1px solid ' + T('line2'), borderRadius: '8px',
+          background: T('surface'), color: T('fg'), padding: '16px 18px', fontSize: '13px', lineHeight: 1.65, overflowWrap: 'anywhere' } },
+        h('header', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px', minHeight: '24px' } },
+          advisorIcon('IconSparkleRegular', '*', { color: T('fg2') }),
+          h('span', { style: { fontWeight: 600, color: T('acc'), fontSize: '13.5px', letterSpacing: '.01em' } }, title),
+          h('span', { role: 'status', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', color: running ? T('fg2') : tone, fontSize: '12px' } },
+            dot(tone), h('span', null, status)),
+          h('span', { style: { marginLeft: 'auto', color: T('fg3'), fontVariantNumeric: 'tabular-nums', fontSize: '11px', minWidth: '34px', textAlign: 'right' } }, elapsed == null ? '' : Math.floor(elapsed) + 's'),
+          props.inspect ? h('button', { type: 'button', title: L('查看调用详情', 'Inspect call'), 'aria-label': L('查看调用详情', 'Inspect call'), onClick: props.inspect,
+            style: { border: 0, background: 'transparent', color: T('fg3'), padding: '4px', cursor: 'pointer', width: '24px', height: '24px' } }, advisorIcon('IconSearchOutlineRegular', '?')) : null),
+        progress != null ? h('div', { 'data-po06-advisor-progress': true, 'aria-hidden': true,
+          style: { marginTop: '12px', height: '2px', borderRadius: '1px', background: T('line2'), overflow: 'hidden' } },
+          h('div', { style: { width: Math.round(progress * 100) + '%', height: '100%', background: tone, transition: 'width .45s ease' } })) : null,
+        h('div', { 'data-po06-advisor-scope': true, style: { marginTop: '10px', fontSize: '12px', color: T('fg2'), overflowWrap: 'anywhere' } },
+          h('strong', { style: { color: T('acc') } }, scopeLabels[reviewScope] || reviewScope), focus ? ' · ' + focus : ''),
+        reviewScope !== 'general' && reviewScope !== 'delivery' ? h('div', { style: { color: T('fg3'), fontSize: '11px', marginTop: '4px' } }, L('结论仅限本次对象，不代表整体通过', 'This conclusion covers only the reviewed focus')) : null,
+        coverage ? h('details', { 'data-po06-advisor-coverage': true, style: { marginTop: '12px', fontSize: '12px' } },
+          h('summary', { style: { cursor: 'pointer', color: T('acc') } }, L('本轮专项覆盖', 'Coverage for this request') + ' · ' + (coverage.rows || []).length),
+          (coverage.missingScopes || []).length ? h('p', { style: { color: T('warn') } }, L('未覆盖：', 'Missing: ') + coverage.missingScopes.map(s=>scopeLabels[s]||s).join(' · ')) : null,
+          (coverage.missingReviews || []).map((row,index)=>h('p', { key:'missing-'+index, style:{color:T('warn')} }, L('未覆盖检查点：', 'Missing focus: ') + (scopeLabels[row.scope]||row.scope) + ' · ' + row.focus)),
+          (coverage.rows || []).map((row,index)=>h('div', { key: row.id || index, style: { borderTop: '1px solid ' + T('line2'), padding: '7px 0', overflowWrap: 'anywhere' } },
+            h('strong', null, (scopeLabels[row.scope]||row.scope) + ' · ' + (row.focus||'')),
+            h('span', { style: { marginLeft: '8px', color: row.status === 'current' ? T('fg3') : T('warn') } }, row.status === 'current' ? L('版本指纹一致', 'Version matches') : row.status === 'changed' ? L('材料已变更', 'Materials changed') : row.status === 'missing' ? L('材料已缺失', 'Materials missing') : L('版本或结果未确认', 'Version or result unconfirmed')),
+            h('p', { style: { margin: '4px 0', color: T('fg2') } }, row.summary || (row.report && row.report.summary) || ''),
+            (row.checks || []).filter(check=>check.status !== 'satisfied').map((check,i)=>h('div', { key:i, style:{color:T('warn'),fontSize:'11px'} }, check.criterion)))),
+          (coverage.limitations || []).map((note,index)=>h('p', {key:index,style:{color:T('warn'),fontSize:'11px'}}, String(note).startsWith('revision-marker-changed:') ? L('复核后记录到源码变更，需重审相关项', 'Recorded source changes require another focused review') : String(note).startsWith('required-focus-unspecified:') ? L('缺少该专项的具体检查对象清单', 'Required focus list is missing') : String(note).startsWith('evidence-limited:') ? L('既有复核证据不完整或未通过', 'Previous review is incomplete or has gaps') : note === 'scope-pass-is-focus-only' ? L('局部通过仅适用于已列出的对象', 'A pass applies only to the listed focus') : note === 'required-scopes-unspecified' ? L('尚未列出必要的专项检查点', 'Required reviews have not been specified') : note))) : null,
+        h('div', { 'data-po06-advisor-question': true, style: sectionStyle },
+          sectionHead('IconSearchOutlineRegular', L('原 AI 询问内容', 'Original AI question')),
+          h('p', { style: { ...textStyle, color: T('fg2'), maxHeight: '160px', overflowY: 'auto' } }, question || L('正在接收询问…', 'Receiving question…'))),
+        h(AdvisorMaterials, { materials, openFile: props.openFile }),
+        h('details', { 'data-po06-advisor-thinking': true, open: processOpen, onToggle: e => setProcessOpen(e.currentTarget.open),
+          style: { marginTop: '14px', borderTop: '1px solid ' + T('line2'), borderBottom: '1px solid ' + T('line2') } },
+          h('summary', { style: disclosureStyle },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+              advisorIcon('IconSparkleRegular', '', { color: T('acc'), width: '13px', height: '13px' }),
+              h('span', null, L('顾问思考内容', 'Advisor thinking')),
+              running ? dot(tone, 6) : null),
+            running ? h('span', { style: { marginLeft: '10px', color: T('fg3'), fontSize: '11px' } }, advisorStage(stage)) : null),
+          processOpen ? h('div', { ref: thinkBody, onScroll: e => { const body = e.currentTarget; followThink.current = body.scrollHeight - body.scrollTop - body.clientHeight < 32 },
+            style: { maxHeight: '280px', overflowY: 'auto', padding: '0 0 12px', minWidth: 0 } },
+            h('pre', { style: { ...textStyle, color: T('fg2') } }, reasoning || (running ? L('等待模型返回思考流…', 'Waiting for model thinking…')
+              : run ? L('模型未提供思考流。', 'The model did not provide a thinking stream.') : L('本次没有可回放的思考记录。', 'No thinking transcript was recorded.'))),
+            run && run.reasoningTruncated ? h('p', { style: { fontSize: '11px', color: T('fg3'), marginBottom: 0 } }, L('仅保留最近 24,000 字符。', 'Only the latest 24,000 characters are retained.')) : null,
+            run && run.activities.length ? h('details', { style: { marginTop: '12px', color: T('fg3'), fontSize: '11px' } },
+              h('summary', { style: { cursor: 'pointer' } }, L('查证记录', 'Evidence activity') + ' · ' + run.toolCalls),
+              h('ul', { style: { paddingLeft: '18px', margin: '6px 0 0' } }, run.activities.map((item, i) => h('li', { key: i, style: { padding: '2px 0' } },
+                (item.ok ? L('已读取', 'Read') : L('未取得', 'Unavailable')) + ' · ' + item.tool + ' · ' + item.target)))) : null) : null),
+        h('div', { 'data-po06-advisor-output': true, style: sectionStyle },
+          sectionHead('IconCheckOutlineRegular', L('顾问答复内容', 'Advisor reply')),
+          h('p', { 'data-po06-advisor-summary': true, style: { ...textStyle, fontSize: '14px', color: T('fg') } }, report ? report.summary : draftReply || (running
+            ? L('顾问正在分析，答复将显示在这里。', 'The advisor is analyzing; its reply will appear here.')
+            : advisorReason((value && (value.reason || value.cut)) || (run && run.reason) || ''))),
+          draftReply ? h('span', { style: { fontSize: '11px', color: T('fg3') } }, L('答复生成中，尚未完成校验', 'Reply streaming; validation pending')) : null,
+          report && report.findings.length ? h('ul', { style: { paddingLeft: '18px', margin: '12px 0' } }, report.findings.map((finding, i) => h('li', { key: i, style: { margin: '7px 0', color: T('fg2') } }, finding.text, refs(finding.evidenceRefs)))) : null,
+          report ? h('div', { style: { marginTop: '12px', color: T('fg2') } },
+            h('div', null, h('span', { style: { color: T('fg3'), marginRight: '8px', fontSize: '12px' } }, L('下一步', 'Next step')), report.nextStep),
+            h('div', { style: { marginTop: '6px' } }, h('span', { style: { color: T('fg3'), marginRight: '8px', fontSize: '12px' } }, L('停止条件', 'Stop condition')), report.stopCondition)) : null,
+          isPartial ? h('p', { style: { ...textStyle, color: T('warn'), marginTop: '10px', fontSize: '12px' } }, L('仅保留已生成内容，不作为完整验收通过。', 'Retained output only; not a completed acceptance review.')) : null),
+        h('details', { 'data-po06-advisor-checks': true, open: checksOpen, onToggle: e => setChecksOpen(e.currentTarget.open),
+          style: { marginTop: '16px', borderTop: '1px solid ' + T('line2') } },
+          h('summary', { style: disclosureStyle },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+              advisorIcon('IconChecklistOutlineRegular', '', { color: T('acc'), width: '13px', height: '13px' }),
+              h('span', null, L('验收结果', 'Acceptance results'))),
+            h('span', { style: { marginLeft: '10px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+              dot(counts.failed ? T('err') : counts.unverified ? T('warn') : counts.satisfied ? T('ok') : T('cap'), 6),
+              h('span', { style: { color: T('fg3') } }, checkSummary))),
+          checksOpen ? h('div', { style: { paddingBottom: '6px' } },
+            checks.length ? checks.map((check, i) => h('div', { key: i, style: { display: 'grid', gridTemplateColumns: '16px minmax(0,1fr)', gap: '8px', padding: '9px 0' } },
+              h('span', { style: { paddingTop: '6px' } }, dot(check.status === 'satisfied' ? T('ok') : check.status === 'failed' ? T('err') : T('cap'))),
+              h('div', null,
+                h('span', { style: { color: T('fg3'), fontSize: '11px', marginRight: '8px' } }, checkLabels[check.status] || check.status),
+                check.criterion, refs(check.evidenceRefs)))) : h('p', { style: { ...textStyle, color: T('fg3') } }, running ? L('等待顾问完成核验。', 'Waiting for the advisor review.') : L('本次未形成可采纳的验收项。', 'No accepted checks were produced.')),
+            !report && value && value.detail ? h('p', { style: textStyle }, L('未通过的验收项：', 'Rejected check: ') + String(value.detail.criterion || ''), refs(value.detail.refs)) : null,
+            // 到点但有进展：把思考尾部摆出来，而不是只给一句「超时」（复杂项目不能空手而归）。
+            !report && value && value.partialReasoning ? h('details', { style: { marginTop: '10px' }, 'data-po06-advisor-partial': true },
+              h('summary', { style: { cursor: 'pointer', color: T('warn'), fontSize: '11px' } }, L('到点前的思考尾部（未形成报告）', 'Thinking tail before the deadline (no report)')),
+              h('pre', { style: { ...textStyle, maxHeight: '200px', overflowY: 'auto', marginTop: '8px', color: T('fg2'), fontFamily: 'inherit', fontSize: '12px' } }, value.partialReasoning)) : null,
+            (!report && ((value && value.raw) || (run && run.draft))) ? h('details', { style: { marginTop: '10px' } },
+              h('summary', { style: { cursor: 'pointer', color: T('fg3'), fontSize: '11px' } }, L('未采纳的原始输出', 'Unaccepted raw output')),
+              h('pre', { style: { ...textStyle, maxHeight: '180px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '12px', marginTop: '8px' } }, (value && value.raw) || run.draft)) : null) : null),
+        // 页脚：一行克制的元信息（模型 / 思考档 / 查证次数 / token 用量）。
+        h('div', { 'data-po06-advisor-meta': true, style: { display: 'flex', flexWrap: 'wrap', gap: '10px', color: T('fg3'), fontSize: '11px', marginTop: '10px' } },
+          model ? h('span', { style: { overflowWrap: 'anywhere' } }, model) : null,
+          effort ? h('span', null, L('思考档 ', 'Effort ') + effort) : null,
+          toolCalls != null ? h('span', null, L('查证 ', 'Evidence ') + toolCalls + L(' 次', ' calls')) : null,
+          usage ? h('span', { 'data-po06-advisor-usage': true,
+            title: L('本次咨询的 token（插件自己的账，不计入 DSH 顶部统计）', 'Tokens for this consultation (plugin-side accounting; not counted in DSH totals)') },
+            usageText(usage, true)) : null,
+          value && (value.truncated || value.omitted) ? h('span', { style: { color: T('warn') } }, L('材料不完整', 'Incomplete evidence')) : null),
+        state.error ? h('p', { style: { color: T('warn'), fontSize: '11px', margin: '6px 0 0' } }, L('实时进度暂不可用：', 'Live progress unavailable: ') + state.error) : null)
+    }
+
     // ── 注册（含单例闸门与自愈重挂）──────────────────────────────────
     // `locale` 必须声明：apply 里读 `ctx.locale`（detectLocale / LOCALE_SVC），
     // 而 cordis 对未 inject 的服务 getter 直接抛 `cannot get property "locale" without inject`
@@ -2792,6 +3141,7 @@ const react = require("react")
       })()
       mountKeyed('tool.call.toolview', 'posix', PosixToolRow)
       mountKeyed('tool.call.toolview', 'bash', BashToolRow)
+      mountKeyed('tool.call.toolview', 'consult_task', AdvisorToolRow)
 
       // 测试钩子：让 Node 侧的单测能真的驱动"重挂"这条路（用来验单例闸门）。
       // 生产路径不读它；带 __ 前缀以免与宿主契约上的字段混淆。
@@ -2801,6 +3151,7 @@ const react = require("react")
         locale: () => LOCALE,
         detectLocale,
         // 主题调色板（单测拿它算对比度：浅色模式"看不清"这类问题要能被机器挡住，不能只靠肉眼）
+        advisorValueOf, advisorArgsOf, advisorDraftReply, advisorProgressPct, AdvisorToolRow, AdvisorMaterials, useAdvisorRun, slashReviewAllowed, usageText, normalizeUsage,
         themeTokens: THEME_TOKENS,
         tokenVars: TOKEN_VARS,
         themeIsDark,

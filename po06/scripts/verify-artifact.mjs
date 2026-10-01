@@ -49,15 +49,28 @@ function gitShow(repo, ref, path) {
 }
 
 /** tgz 内的成员名（`package/...`；目录条目被 tar -t 列出时以 / 结尾，这里过滤掉）。 */
+// ⚠ 两种 tar 的路径语义不同（2026-10-01 真机）：本机 `tar` 在 bash 下解析到 MSYS 的 GNU tar，
+//   它把 `C:\...` 的冒号当成「远程主机」⇒ `tar (child): Cannot connect to C: resolve failed`；
+//   在 pwsh 下解析到 Windows 自带 bsdtar，则直接吃绝对路径。结果就是**同一个核对脚本在两种 shell 下
+//   一个红一个绿**——发布核对必须与调用者的 shell 无关。
+//   做法：一律 `cwd` 切到 tgz 所在目录、只传**文件名**；这样两边都成立，也不需要 GNU 专有的 --force-local。
+function tarAt(tgz) {
+  const dir = dirname(tgz)
+  return { dir, name: basename(tgz) }
+}
+
+/** tgz 内的成员名（`package/...`；目录条目被 tar -t 列出时以 / 结尾，这里过滤掉）。 */
 function tarMembers(tgz) {
-  const r = spawnSync('tar', ['-tzf', tgz], { encoding: 'utf8', maxBuffer: 1e8 })
+  const { dir, name } = tarAt(tgz)
+  const r = spawnSync('tar', ['-tzf', name], { cwd: dir, encoding: 'utf8', maxBuffer: 1e8 })
   if (r.status !== 0) throw new Error('tar -tzf 失败：' + String(r.stderr || '').trim())
   return String(r.stdout).split('\n').map((s) => s.trim()).filter((s) => s && !s.endsWith('/')).sort()
 }
 
 /** 从 tgz 里取出一个成员的**原始字节**（不要走文本解码：这里要的是字节相等）。 */
 function tarExtract(tgz, member) {
-  const r = spawnSync('tar', ['-xzOf', tgz, member], { maxBuffer: 1e8 })
+  const { dir, name } = tarAt(tgz)
+  const r = spawnSync('tar', ['-xzOf', name, member], { cwd: dir, maxBuffer: 1e8 })
   if (r.status !== 0) throw new Error('tar -xzOf 失败：' + member + ' ' + String(r.stderr || '').trim())
   return r.stdout
 }

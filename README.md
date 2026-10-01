@@ -1,4 +1,4 @@
-# dsh-prompt-optimizer **v0.7.8** · 提示词优化器（DSH Web 插件）
+# dsh-arbiter-wf **v0.8.0-preview** · 独立裁判层（DSH Web 插件）
 
 **中文** ｜ [English](README.en.md)
 
@@ -15,21 +15,21 @@
 >
 > | 渠道 | 是什么 | 该不该用 |
 > |---|---|---|
-> | **GitHub Release 附件** | 当前版本（`@dsh-external/dsh-po06`） | ✅ **唯一正确来源**，就是下面这段命令 |
+> | **GitHub Release 附件** | 当前版本（`@dsh-external/dsh-arbiter-wf`） | ✅ **唯一正确来源**，就是下面这段命令 |
 > | **npm** | **本插件不发 npm**（`private: true`），只在 Release 分发；
 >   registry 上搜到的同名或相似包**都不是本项目** | ❌ 不要从 npm 装 |
 > | 仓库根直接 clone | 与本 Release 同源，适合开发者 | ⚠️ 需要自己构建，普通使用走 Release 更省事 |
 >
 > 想找 0.1 ~ 0.6 的旧版本？见 [`old/`](old/README.md)（含各代简介与下载方法）。
 > 想自己发一版？见 [`RELEASING.md`](docs/RELEASING.md)（9 步发布规程 + 检查清单）。
-> ### 30 秒装上 0.7.8
+> ### 30 秒装上 0.8.0-preview
 >
 > ```powershell
-> $v = '0.7.8'; $d = "$env:USERPROFILE\Downloads"
-> Invoke-WebRequest "https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/download/v$v/dsh-external-dsh-po06-$v.tgz" -OutFile "$d\dsh-external-dsh-po06-$v.tgz"
+> $v = '0.8.0-preview'; $d = "$env:USERPROFILE\Downloads"
+> Invoke-WebRequest "https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/download/v$v/dsh-external-dsh-arbiter-wf-$v.tgz" -OutFile "$d\dsh-external-dsh-arbiter-wf-$v.tgz"
 > Get-Content "$d\SHA256SUMS-$v.txt"     # 与上一行下载到的 tgz 对 sha256（Release 页也有同一份）
 > dsh --profile po061 --from-default-profile web --dump-config        # 建一个干净 profile
-> dsh plugin --profile po061 add "$d\dsh-external-dsh-po06-$v.tgz"    # 装
+> dsh plugin --profile po061 add "$d\dsh-external-dsh-arbiter-wf-$v.tgz"    # 装
 > dsh --profile po061                                                 # 起服务（会打印带 token 的地址）
 > ```
 >
@@ -105,7 +105,7 @@
 **读项目文件会不会动我的东西？** 不会：只读、限定在你的工作目录内、越界一律拒绝。
 
 **关掉/卸载？** 临时关：档位拨到 `关闭`（不拦不注入，等于没装）。彻底卸载：从 profile 的 `dsh.profile.bundles` 与
-`dependencies` 里移除 `@dsh-external/dsh-po06`，重启 DSH；配置在 `<home>/po06.json`，可自行删除。
+`dependencies` 里移除 `@dsh-external/dsh-arbiter-wf`，重启 DSH；配置在 `<home>/po06.json`，可自行删除。
 
 ## 隐私与边界
 
@@ -118,30 +118,26 @@
 
 ## 诚实声明（请按这个预期使用）
 
-- ✅ **内部自洽有证据**：**48 套 / 645 项测试全绿**（含打包自足性、文档漂移门禁；另有 231 个变异守卫，属发版门那条线）。
+- ✅ **内部自洽有证据**：**71 套测试全绿**（`node --test po06/test/*.test.mjs`，Node 测试运行器口径 209 项；含打包自足性、文档漂移门禁）。**两种 shell 下均已复验**（bash 与 pwsh）。
 - 📊 **作者实测观察（不是专业跑分）**：测试主要在 **DeepSeek-V4.1-Flash + PTC + PowerShell** 环境下进行。
   **目前没有做过专业的跑分测试**；但在常见的各类 one-shot 任务与长任务迭代中，
   **实际效果明显强于同环境、同提示词下的 DeepSeek-V4.1-Flash**；另据**少量项目**的统计，
   **疑似会降低 token 消耗量、节省开销**。
 - ⚠️ **能力仍是实验性的**，请当成**可以装、可以试、随时可关**的东西，**不是"升级"**。
-- 📌 本版（0.7.8）修掉的真机问题：① 内置 Bash —— 把原来要单独装的 bash 后端并进本插件：
-  装上这一个插件就有 bash（自带 GNU bash/MSYS2 运行时，无需 WSL），详情面板里可一键开关
-  （关掉＝不把该工具交给模型，模型看不到它）；② 三档真正拉开 —— 补充程度（700 / 1200 / 2000 字）与
-  自主预算（1 / 2 / 3 个问题）两个维度逐级递进（此前 minimal 从未被任何档位使用）；
-  ③ 内部控制面信息不再进入工作模型（注入头部原先带「任务 default · 意图修订 N」）；
-  ④ 质量解释改为结果方向而非制作清单；⑤ 思维层不再显示裸 JSON 补丁。
-  两个维度逐级递进（此前 `minimal` 从未被任何档位使用、且 standard 与 heavy 的 detail 相同，实测"重度并不明显比轻度高"）；
-  ② **内部控制面信息不再进入工作模型**——注入头部原先带「任务 `default` · 意图修订 N」，会被模型当成任务语义处理，现已移除
-  （元数据仍留在宿主 state 与台账里供调试）；③ **质量解释改为"结果方向"而非制作清单**，不再逐项罗列零件、参数、材质与后期效果；
-  ④ **可逆实现默认**写进「实现选项」节（可逆细节可自行调整并说明理由；不可逆的产品方向仍只能留在未决项）；
-  ⑤ **思维层不再显示裸 JSON 补丁**——模型不返回思考文本时，把结构化输出解析成可读的产出条目。
+- 📌 本版（0.8.0-preview）改了什么：
+  ① **独立顾问 `consult_task`** —— 另一个模型实例只按原始证据与你的原话复核：支持按维度分项复核（形体与装配 / 画面观感 / 代码正确性 / 交互逻辑 / 性能证据 / 交付覆盖 / 自定义）、交付前的覆盖核对，以及**文件与图像材料的真实传递**（图像仅在宿主确认所选模型支持时才附入，否则明确标「未检查」，不拿路径冒充看过）；
+  ② **内置 Bash 可靠性整改** —— 取消信号真正接入执行、每次调用独立输出目录（不再互相覆盖）、失败也保留 stdout 与 stderr、退出状态标记回到末尾、句柄释放、日志按窗口读取、运行时探测改为可取消并短期缓存；
+  ③ **斜杠命令允许列表 `slashReview`** —— 只有名单内、且宿主确认当前已注册的命令才走「拦截 → 优化 → 可编辑确认」；官方命令与未注册命令照旧直发，查询不到命令表时退回名单并如实标注未核对；
+  ④ **顾问卡片 token 计数修复** —— 页脚原先恒显 `Σ — tok`（取值与格式化字段不一致），现在正确显示合计与 入 / 出 / 缓存；
+  ⑤ **shell 选择判据改写** —— 删掉未实测的「pwsh 更快更稳」断言，改为按命令性质给判据，并如实标注入「bash 通常更稳」属使用经验而非实测；
+  ⑥ **本版改名** —— 插件更名为 `dsh-arbiter-wf`（原 `dsh-po06`）。配置与台账文件名保持不变，**旧设置无需迁移**。
   详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 版本与证据
 
 - 更新日志：[`CHANGELOG.md`](CHANGELOG.md) ｜ 人工验收：[`po06/HUMAN-TEST.md`](po06/HUMAN-TEST.md) ｜
   发版登记（含每次真跑过的装机演练）：[`po06/RELEASE-CHECKLIST.md`](po06/RELEASE-CHECKLIST.md)
-- 安装与自检：[`po06/README.md`](po06/README.md) ｜ 当前 Release：**[v0.7.8](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.7.8)**
+- 安装与自检：[`po06/README.md`](po06/README.md) ｜ 当前 Release：**[v0.8.0-preview](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.8.0-preview)**
 - 兼容：`dsh-0.1.6-alpha.1`（`0.1.5-rc.1` 亦可运行）｜ 作者：啃轮胎的西狐
 - **上一代（0.5 线，仍可用，但已不再更新）**：装在另一个包 `@dsh-external/dsh-prompt-optimizer`，
   最后发布 `v0.5.0-beta.1`；设计与用法见 [`SPEC.md`](docs/SPEC.md)，历史文档（含 0.5 的实测数据）见

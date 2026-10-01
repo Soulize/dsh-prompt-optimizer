@@ -828,7 +828,11 @@ await ta('EV-0102：context 提供者抛错要留痕；正常放行要返回包�
   // ② 放行且有包 ⇒ 返回包本身
   mod.adapter.enableGate.set(sid, { enabled: true, code: 'test-forced', reason: '单测' })
   mod.adapter.setIntentText(sid, '【包】测试文本')
-  eq(provider({ agent: { id: sid } }), '【包】测试文本', '放行时返回该会话的包')
+  const rendered = provider({ agent: { id: sid } })
+  ok(rendered.includes('【包】测试文本'), '放行时保留该会话的包')
+  ok(rendered.includes('顾问调用协议'), '放行时同时给出工作模型顾问流程')
+  mod.adapter.setIntentText(sid, '')
+  ok(provider({ agent: { id: sid } }).includes('顾问调用协议'), '解释层没有新包也不能丢掉顾问调用流程')
 
   // ③ 让闸门判定**抛错** ⇒ 必须返回空，且台账里留下一条 context-provider-threw
   const origEnsure = mod.adapter.enableGate.ensure

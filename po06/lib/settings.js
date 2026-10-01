@@ -112,10 +112,18 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 0.7.1：内置 Bash（随本插件装配即提供）。默认 **开**——它是"内置功能"，
   // 关掉＝不把 bash 工具注册给模型（模型看不到它），不是在工具内部做软拦截。
   bash: true,
+  // 0.8：**斜杠命令允许列表**（命令名不带斜杠）。
+  // 默认空 = 所有斜杠命令照旧交还宿主（与改动前完全一致）。
+  // 为什么不直接放开斜杠：宿主自己的 /clear、/model、/compact 一旦被审查浮层接管，
+  // 用户改一个字符就可能破坏命令语义；所以只放行显式列出的、且**当前真的已注册**的命令。
+  slashReview: [],
 })
 
 /** 允许按会话覆盖的键（档位四件套；其余设置保持全局）。 */
 export const SESSION_KEYS = Object.freeze(['assist', 'detail', 'budget', 'tier', 'framing'])
+
+/** 斜杠命令名单上限（32 个字符/条，最多 16 条）。 */
+export const SLASH_REVIEW_MAX = 16
 
 /** 白名单：只有这些键会被读/写。 */
 export const SETTINGS_KEYS = Object.freeze([
@@ -125,6 +133,7 @@ export const SETTINGS_KEYS = Object.freeze([
   'effortByModel',
   'bySession',
   'framing',
+  'slashReview',
 ])
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -216,6 +225,22 @@ export function normalizeSettings(raw) {
     }
     return out
   }
+  // 斜杠命令名单：逐条校验命令名，坏条目单条丢弃（不整表回退），并去重、限量。
+  const pickSlashReview = () => {
+    const v = src.slashReview
+    if (v === undefined) return []
+    if (!Array.isArray(v)) { problems.push({ key: 'slashReview', kind: 'wrong-type', got: v, used: [] }); return [] }
+    const rows = []
+    for (const item of v.slice(0, SLASH_REVIEW_MAX * 2)) {
+      const name = typeof item === 'string' ? item.trim().replace(/^\//, '').toLowerCase() : ''
+      if (!name || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name)) {
+        problems.push({ key: 'slashReview[' + String(item).slice(0, 24) + ']', kind: 'not-a-command-name', got: item, used: undefined })
+        continue
+      }
+      if (!rows.includes(name)) rows.push(name)
+    }
+    return rows.slice(0, SLASH_REVIEW_MAX)
+  }
   const settings = {
     assist: pick('assist', ASSIST_MODES, base.assist),
     detail: pick('detail', DETAIL_LEVELS, base.detail),
@@ -229,6 +254,7 @@ export function normalizeSettings(raw) {
     turns: pickInt('turns', TURNS_MIN, TURNS_MAX, DEFAULT_SETTINGS.turns),
     readTools: pickBool('readTools', DEFAULT_SETTINGS.readTools),
     bash: pickBool('bash', DEFAULT_SETTINGS.bash),
+    slashReview: pickSlashReview(),
   }
   // model：null / 缺省 = 跟随会话；给了就必须是 { provider, model } 两个非空字符串
   const m = src.model

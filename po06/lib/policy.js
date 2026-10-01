@@ -98,6 +98,25 @@ export function policyFor(settings, sessionId) {
  * 读**生效**的政策：`<home>/po06.json` 里的设置 → 归一化 → 政策。
  * 任何读/解析异常都回落到默认政策（保守：默认档位就是今天的行为）。
  */
+/**
+ * 包的"形状"——决定编译结果的那几个生效字段。
+ *
+ * 为什么单独拎出来：包文本是**按当时政策编译好的一整段字符串**（存在 intentBySession 里）。
+ * 政策一变，那份字符串就过期了；若不作废，它会在后续回合继续被注入 ——
+ * 用户实测 2026-09-29：切回普通档（framing=neutral）后，注入文里**仍然带着硬邦邦那段**。
+ */
+export function packetShapeOf(pol) {
+  if (!pol) return ''
+  return [pol.assist, pol.detail, pol.budget, pol.framing].join('|')
+}
+
+/** 写盘前后形状不同 ⇒ 已存的包文本必须作废（下一次拦截会重编译）。两侧都取不到时不作废。 */
+export function packetShapeChanged(before, after) {
+  const a = packetShapeOf(before)
+  const b = packetShapeOf(after)
+  return a !== '' && b !== '' && a !== b
+}
+
 export function readPolicy({ home, readFile, sessionId } = {}) {
   const read = readFile || ((p) => { try { return existsSync(p) ? readFileSync(p, 'utf8') : null } catch { return null } })
   let raw = null

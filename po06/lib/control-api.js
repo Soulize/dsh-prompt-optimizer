@@ -267,7 +267,7 @@ function readTextSafe(path) {
  *                         宿主就不知道政策变了。返回值原样带回给界面（诊断用）。
  * @param opts.now         注入时钟（测试用）
  */
-export function createControlHandler({ home, stateDir, ledgerPath, version = null, resolveEfforts = null, sessionModel = null, listModels = async () => ({ models: [], problems: [] }), listTools = null, toolState = null, now = () => Date.now(), help = {}, interpret = null, setPacket = null, progress = null, rollbackPacket = null, getPacket = null, onSettingsWritten = null, gateSummary = null } = {}) {
+export function createControlHandler({ home, stateDir, ledgerPath, version = null, resolveEfforts = null, sessionModel = null, listModels = async () => ({ models: [], problems: [] }), listTools = null, toolState = null, now = () => Date.now(), help = {}, interpret = null, setPacket = null, progress = null, advisorProgress = null, rollbackPacket = null, getPacket = null, onSettingsWritten = null, gateSummary = null, registeredCommands = null } = {}) {
   const H = String(home)
   const cfgPath = join(H, 'po06.json')
   const ledger = ledgerPath || join(H, 'po06-wire.jsonl')
@@ -394,6 +394,33 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
           gate: typeof gateSummary === 'function' ? (() => { try { return gateSummary() } catch { return null } })() : null,
           ours: intent.ours, reason: intent.reason || null,
           settings: norm.settings, described: describeSettings(norm.settings),
+          // 斜杠命令允许列表（0.8）：只有**配置里列了、且当前真的已注册**的命令才允许被拦截。
+          // 问不到命令表时**退回名单本身**（verified:false 如实标注）——否则名单会被静默架空，
+          // 用户看到的是“配了也不生效”（2026-10-01 真机就是这个现象）。
+          // 已经问到时严格精确：没注册的命令绝不进 active。
+          // 真实失败模式汇总（每一条都如实回传）：
+          //   no-allowlist        没配名单（默认，全部交还宿主）
+          //   session-required    没带 ?session=
+          //   unverified:<原因>    查不到命令表，已按名单兜底并标注未核对
+          //   agents-service-unavailable / no-live-agent / commands-list-threw:*
+          slashReview: (() => {
+            const want = Array.isArray(norm.settings.slashReview) ? norm.settings.slashReview : []
+            if (!want.length) return { names: [], active: [], reason: 'no-allowlist' }
+            if (!qsid) return { names: want, active: [], reason: 'session-required' }
+            let reg = null
+            try { reg = typeof registeredCommands === 'function' ? registeredCommands(qsid) : { ok: false, reason: 'resolver-missing', names: [] } }
+            catch (e) { reg = { ok: false, reason: 'threw:' + String((e && e.message) || e), names: [] } }
+            const have = new Set((reg && Array.isArray(reg.names) ? reg.names : []).map((n) => String(n).toLowerCase()))
+            // ① 问到了命令表 ⇒ 精确匹配（没注册的绝不拦）。
+            if (reg && reg.ok === true) {
+              return { names: want, active: want.filter((n) => have.has(n)), verified: true,
+                via: (reg.diagnostics && reg.diagnostics.via) || null, reason: null, diagnostics: reg.diagnostics || null }
+            }
+            // ② 问不到（命令表或 agent 拿不到）⇒ 退回名单：列了就是用户要我拦的。
+            //    标记 verified:false + 具体原因，既不假装核对过，也不静默失效。
+            return { names: want, active: want.slice(), verified: false, via: null,
+              reason: 'unverified:' + String((reg && reg.reason) || 'unavailable'), diagnostics: (reg && reg.diagnostics) || null }
+          })(),
           // 会话生效值（无 ?session= 时为 null）：界面用它显示"本会话的档位"
           sessionId: qsid || null,
           sessionEffective: sessEff
@@ -542,6 +569,14 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         const r = await setPacket({ sessionId: String(v.sessionId || ''), text: String(v.text == null ? '' : v.text) })
         const out = (r && typeof r === 'object') ? r : { ok: false, reason: 'bad-hook-result' }
         return send(out.ok === true ? 200 : 400, { ok: out.ok === true, reason: out.reason || null, chars: typeof out.chars === 'number' ? out.chars : 0 })
+      }
+      if (method === 'GET' && path === API_PREFIX + '/advisor-progress') {
+        const sid = String(query.get('session') || '').trim()
+        const callId = String(query.get('call') || '').trim()
+        const runId = String(query.get('run') || '').trim()
+        if (!sid || (!callId && !runId)) return send(400, { ok: false, reason: 'session-and-call-required' })
+        const run = typeof advisorProgress === 'function' ? advisorProgress(sid, { callId, runId }) : null
+        return send(200, { ok: true, run })
       }
       if (method === 'GET' && path === API_PREFIX + '/interpret-progress') {
         // P11：让"优化中"那几十秒看得见（阶段 + 流式正文尾部）。**只读、无副作用**；

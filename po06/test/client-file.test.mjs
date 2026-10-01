@@ -26,6 +26,21 @@ function t(name, fn) { try { fn(); pass += 1 } catch (e) { failures.push({ name,
 const src = existsSync(CLIENT) ? readFileSync(CLIENT, 'utf8') : ''
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 
+t('浅色模式：显式浅色规则必须存在、且排在深色之后（同权重靠顺序决胜）', () => {
+  const { mod } = loadClientModule()
+  const css = mod.__debug.themeTokensCss()
+  const lightSelf = css.indexOf("data-po06][data-po06-theme=\"light\"]")
+  const darkAncestor = css.indexOf("data-ds-dark-theme] [data-po06]")
+  ok(lightSelf > 0, '要有 [data-po06][data-po06-theme="light"] 这条显式浅色规则')
+  ok(css.includes('[data-po06-theme="light"] [data-po06]'), '也要覆盖「标记在祖先上」的情形')
+  ok(lightSelf > darkAncestor, '浅色规则必须排在深色之后，否则压不过同权重的祖先深色规则')
+  // 顾问卡片此前漏了主题订阅 ⇒ 切浅色后不重渲染、标记停在 dark（用户看到的「只有黑色模式」）
+  const advisorAt = src.indexOf('function AdvisorToolRow(props)')
+  const nextFn = src.indexOf('\n    function ', advisorAt + 1)
+  const body = src.slice(advisorAt, nextFn > 0 ? nextFn : advisorAt + 4000)
+  ok(/useThemeLive\(\)/.test(body), '顾问卡片必须订阅主题变化（否则切浅色不生效）')
+})
+
 // ── ① 文件存在 + 语法可解析 + 模块加载器格式正确 ──────────────────────
 t('client.js 存在、语法通过、用宿主的模块加载器格式注册且 id 与包名一致', () => {
   ok(src.length > 0, 'client.js 必须存在且有内容')
@@ -80,9 +95,9 @@ t('功能：更新实例抢走 token 后，旧实例的**重挂**不再注册（
   const first = loadClientModule(win)       // 第一个实例（模拟 HMR 前的旧实例）
   // P10：挂载点从 `conversation.input.dock` **搬到** `conversation.input.left`（原来是"新增一个"，
   // 现在是"换过去"，所以总数仍是 3：input.left + shell.overlay + settings.plugins.tab）
-  eq(first.calls.filter((c) => c.def).length, 5, '第一个实例先注册了 5 个')
+  eq(first.calls.filter((c) => c.def).length, 6, '第一个实例先注册了 5 个')
   const second = loadClientModule(win)      // 第二个实例抢注 token
-  eq(second.calls.filter((c) => c.def).length, 5, '第二个实例也注册 5 个（最新获胜）')
+  eq(second.calls.filter((c) => c.def).length, 6, '第二个实例也注册 5 个（最新获胜）')
   // 旧实例的"自愈重挂"再跑一次：因为 token 已被第二个实例抢走，**不得**再注册
   const remount = first.mod.__debug && first.mod.__debug.remount
   eq(typeof remount, 'function', '要有可驱动的重挂钩子（__debug.remount）')
@@ -314,7 +329,9 @@ t('P11 前置拦截：捕获阶段接管、没有放行通道就不拦、失败�
   eq((src.match(/setInterceptCount\(\(n\) => n \+ 1\)/g) || []).length, 1,
     '计数只允许在 beginHold 里去重之后加一次（事件处理函数里再加会翻倍）')
   // ⑤ 命令（/xxx）与空草稿交还官方
-  ok(/if \(t\.startsWith\('\/'\)\) return 'slash-command'/.test(src), '斜杠命令不拦')
+  // 0.8：斜杠命令**默认仍交还官方**，只有名单内且宿主确认已注册的才放行（判定见纯函数那条用例）。
+  ok(/if \(t\.startsWith\('\/'\) && !slashAllowedDraft\(t\)\) return 'slash-command'/.test(src), '斜杠命令默认交还官方，名单内已注册的才拦')
+  ok(/slashActive/.test(src) && /data\.slashReview/.test(src), '放行名单必须来自宿主 /status.slashReview（不能自己猜命令表）')
   ok(/if \(!draftNow\(\)\) return 'empty-draft'/.test(src), '空草稿不拦（那时主按钮是"停止生成"）')
   // ⑥ 诊断可见：真机上要能分辨"监听器没挂上"与"判定放行了"（两者修法完全不同）
   ok(/data-po06-seen/.test(src) && /data-po06-lastpass/.test(src), '必须暴露"看见几个事件/最后一次为什么放行"')
@@ -426,7 +443,7 @@ t('崩溃回归②：没有 locale 服务时（访问即抛）apply 仍要成功
   const calls = []
   const ctx = cordisLikeCtx({}, calls)          // 只提供 slots；其它服务读取即抛（真机就是这样）
   const { mod } = loadClientModule(undefined, undefined, undefined, ctx)
-  eq(calls.filter((c) => c.def).length, 5, '五个座位仍要注册上')
+  eq(calls.filter((c) => c.def).length, 6, '五个座位仍要注册上')
   eq(mod.__debug.locale(), 'zh', '拿不到语言服务 ⇒ 中文兜底（不是崩、也不是空白）')
 })
 
@@ -439,7 +456,7 @@ t('崩溃回归③：有 locale 服务时按它定语言，并订阅切换', () 
   }
   const ctx = cordisLikeCtx({ locale: face }, calls)
   const { mod } = loadClientModule(undefined, undefined, undefined, ctx)
-  eq(calls.filter((c) => c.def).length, 5, '五个座位仍要注册上')
+  eq(calls.filter((c) => c.def).length, 6, '五个座位仍要注册上')
   eq(mod.__debug.locale(), 'en', 'DSH 语言为 en ⇒ 界面语言 en')
 })
 
@@ -449,7 +466,7 @@ t('功能：apply 真的注册了五个座位（3 个 list 插槽 + 2 个 keyed 
   // P10：控件从 `conversation.input.dock` 搬到 `conversation.input.left`（挂载点换了，数量不变）
   // 2026-09-24：**多了一个 keyed 座位** `tool.call.toolview`（key=`posix`）——
   // 用户要求"要能一眼看出用的是虚拟工具"，而宿主把 terminal 卡统一渲染成"运行命令"。
-  eq(registered, ['conversation.input.left', 'shell.overlay', 'settings.plugins.tab', 'tool.call.toolview', 'tool.call.toolview'],
+  eq(registered, ['conversation.input.left', 'shell.overlay', 'settings.plugins.tab', 'tool.call.toolview', 'tool.call.toolview', 'tool.call.toolview'],
     '五个座位都必须被真的注册')
   const bar = calls.filter((c) => c.def && c.def.name === 'conversation.input.left')[0]
   eq([bar.def.id, bar.def.order], ['prompt-optimizer', 20], "控件栏必须是 id='prompt-optimizer' / order=20")
@@ -463,7 +480,7 @@ t('功能：apply 真的注册了五个座位（3 个 list 插槽 + 2 个 keyed 
   // 两条注册契约不同：list 座位要唯一 id；keyed 座位要 key（**没有 id**）。
   ok(calls.every((c) => c.def && (typeof c.def.id === 'string' && c.def.id.length > 0
     || typeof c.def.key === 'string' && c.def.key.length > 0)), '每个注册都要带唯一 id（list）或 key（keyed）')
-  eq(calls.filter((c) => c.Comp !== undefined && c.Comp !== null).length, 5, '每个座位都要带组件（不能是 undefined）')
+  eq(calls.filter((c) => c.Comp !== undefined && c.Comp !== null).length, 6, '每个座位都要带组件（不能是 undefined）')
   eq(typeof dispose, 'function', 'apply 必须返回释放函数')
   const before = calls.length
   dispose()
@@ -475,6 +492,159 @@ t('功能：apply 真的注册了五个座位（3 个 list 插槽 + 2 个 keyed 
 // 为什么必须有守卫：宿主的 `card:'terminal'` 只是**声明呈现意图**，当前 UI 会把终端卡统一渲染成
 // "运行命令 · 摘要"，与 pwsh 无从区分。真正让它长得不一样的是**这个 keyed 视图**，
 // 所以"它注册了没有、图标/徽标在不在、缺字段会不会崩"都要被钉住。
+t('顾问 token 计数：provider 原始字段也要能显示，且不编造合计', () => {
+  const {mod}=loadClientModule()
+  const {usageText,normalizeUsage}=mod.__debug
+  ok(typeof usageText==='function'&&typeof normalizeUsage==='function','用量格式化与归一化必须可测')
+  // 真机 bug（2026-10-01）：卡片优先取进度记录里的 **provider 原始字段**
+  // （{inputTokens,outputTokens,cacheReadTokens,totalTokens}），而 usageText 只认归一后的键
+  // ⇒ 四个键全 undefined ⇒ 页脚恒显 Σ — tok。这条断言是那个回归的哨兵。
+  const raw={inputTokens:28068,outputTokens:13799,cacheReadTokens:69760,cacheWriteTokens:0,totalTokens:111627}
+  const text=usageText(raw,true)
+  ok(!text.includes('—'),'原始字段必须能显示数字，不能再恒显 —：'+text)
+  ok(text.includes('111.6k'),'合计要出现：'+text)
+  ok(text.includes('28.1k')&&text.includes('13.8k')&&text.includes('69.8k'),'分项要出现：'+text)
+  eq(usageText({in:28068,out:13799,cache:69760,total:111627},true),text,'两种来源必须给出同一文案')
+  eq(usageText(null,true),'Σ — tok','真的没有才算 —')
+  eq(usageText({},true),'Σ — tok','空对象同样算没有')
+  const noTotal=usageText({inputTokens:1000,outputTokens:200},true)
+  ok(!/Σ [\d.]+k? tok \|/.test(noTotal),'provider 没给合计就不替它算：'+noTotal)
+  ok(noTotal.includes('1.0k')&&noTotal.includes('200'),'分项仍然要显示：'+noTotal)
+  eq(normalizeUsage({prompt_tokens:5,completion_tokens:7,total_tokens:12}),{in:5,out:7,cache:null,total:12},'蛇形字段名也认')
+})
+
+t('顾问卡片页脚：拿到原始 usage 时必须渲染出数字', () => {
+  const react={createElement:(type,props,...children)=>({type,props,children}),Fragment:'Fragment',useState:v=>[v,()=>{}],useRef:v=>({current:v}),useEffect:()=>{},useCallback:f=>f,useMemo:f=>f()}
+  const {mod}=loadClientModule(undefined,react)
+  const text=n=>typeof n==='string'?n:!n||typeof n!=='object'?'':(n.children||[]).flat(Infinity).map(text).join(' ')
+  const value={ok:true,usage:{inputTokens:28068,outputTokens:13799,cacheReadTokens:69760,totalTokens:111627},
+    report:{verdict:'gaps',summary:'有缺口',checks:[],findings:[],nextStep:'补证据',stopCondition:'取得新证据再审'}}
+  const tree=mod.__debug.AdvisorToolRow({phase:'result',sessionId:'s',callId:'c',block:{content:[{type:'text',text:JSON.stringify(value)}]}})
+  const shown=text(tree)
+  ok(shown.includes('111.6k')&&shown.includes('28.1k'),'页脚要显示本次咨询的 token：'+shown.slice(0,240))
+  ok(!shown.includes('Σ — tok'),'不能再是空账')
+})
+
+t('斜杠放行判定：只认名单内且已注册的命令，且不误配前缀', () => {
+  const {mod}=loadClientModule()
+  const f=mod.__debug.slashReviewAllowed
+  ok(typeof f==='function','判定必须是可测的纯函数')
+  eq(f(['vmake'],'/vmake 做个视频'),true,'名单内命令放行')
+  eq(f(['vmake'],'/VMAKE x'),true,'大小写不敏感')
+  eq(f(['vmake'],'/vmake'),true,'只有命令名本身也放行')
+  eq(f(['vmake'],'/vmakefoo x'),false,'前缀相同但不是同一命令 ⇒ 不放行')
+  eq(f(['vmake'],'/clear'),false,'官方命令不在名单内 ⇒ 不放行')
+  eq(f(['vmake'],'/other x'),false,'不在名单内 ⇒ 不放行（未注册的命令不会进 active）')
+  eq(f([],'/vmake x'),false,'空名单 == 旧行为：全部交还宿主')
+  eq(f(null,'/vmake x'),false,'拿不到清单时同样不放行（fail-closed）')
+  eq(f(['vmake'],'普通消息'),false,'非斜杠消息不适用')
+})
+
+t('专项卡片：范围、对象、过期覆盖与未覆盖检查点可见', () => {
+  const react={createElement:(type,props,...children)=>({type,props,children}),Fragment:'Fragment',useState:v=>[v,()=>{}],useRef:v=>({current:v}),useEffect:()=>{},useCallback:f=>f,useMemo:f=>f()}
+  const {mod}=loadClientModule(undefined,react)
+  const value={ok:true,reviewScope:'delivery',focus:'发布前覆盖',coverage:{rows:[{id:'C1',scope:'geometry',focus:'轮系共轴',status:'changed',summary:'旧版本局部报告',checks:[{criterion:'轮系方向',status:'unverified'}]}],missingReviews:[{scope:'geometry',focus:'轮系共轴'}],missingScopes:[],limitations:[]},report:{verdict:'unverified',summary:'需重审',checks:[],findings:[],nextStep:'补证据',stopCondition:'取得新证据再审'}}
+  const tree=mod.__debug.AdvisorToolRow({phase:'result',sessionId:'s',callId:'c',block:{type:'tool-result',content:[{type:'text',text:JSON.stringify(value)}]}})
+  const text=n=>typeof n==='string'?n:!n||typeof n!=='object'?'':(n.children||[]).flat(Infinity).map(text).join(' ')
+  const shown=text(tree)
+  ok(shown.includes('交付覆盖')&&shown.includes('发布前覆盖'),'范围和对象可见')
+  ok(shown.includes('轮系共轴')&&shown.includes('材料已变更'),'过期局部报告可见')
+  ok(shown.includes('未覆盖检查点'),'精确缺口可见')
+})
+
+t('顾问材料条目：逐项状态、内容展开、复用侧栏预览，不冒充已看图', () => {
+  const react = { createElement: (type, props, ...children) => ({ type, props, children }), Fragment: 'Fragment',
+    useState: value => [value, () => {}], useRef: value => ({ current: value }), useEffect: () => {}, useCallback:f=>f,useMemo:f=>f() }
+  const { mod } = loadClientModule(undefined, react)
+  let opened
+  const tree = mod.__debug.AdvisorMaterials({ materials: [
+    {id:'F0',path:'out.html',kind:'file',purpose:'代码验收',status:'truncated',sent:true,sentChars:16000,chars:22000,excerpt:'真实代码片段',previewAvailable:true,previewPath:'D:/project/out.html'},
+    {id:'I0',path:'default.png',kind:'image',purpose:'默认曝光',status:'not-inspected',sent:false,reason:'model-text-only',previewAvailable:true,previewPath:'D:/project/default.png'},
+    {id:'F1',path:'missing.log',kind:'file',purpose:'验证日志',status:'unavailable',sent:false,reason:'file-not-found'},
+  ],openFile:(...args)=>{opened=args} })
+  const walk = node => !node || typeof node !== 'object' ? [] : [node].concat((node.children||[]).flat(Infinity).flatMap(walk))
+  const text = node => typeof node==='string'?node:!node||typeof node!=='object'?'':(node.children||[]).flat(Infinity).map(text).join(' ')
+  const rows = walk(tree).filter(n=>n.props && n.props['data-advisor-material']!==undefined)
+  eq(rows.length,3,'三份材料三条路径，状态独立')
+  ok(text(tree).includes('部分内容')&&text(tree).includes('未检查图片')&&text(tree).includes('不可用'),'真实状态不可混同')
+  ok(text(tree).includes('真实代码片段'),'可展开看到实际附入的内容片段')
+  const link=walk(tree).find(n=>n.type==='button'&&text(n)==='out.html')
+  link.props.onClick({preventDefault(){},stopPropagation(){}})
+  eq(opened,['D:/project/out.html'],'使用宿主openFile，不自建URL也不猜options字段')
+  ok(!walk(rows[2]).some(n=>n.type==='button'),'不存在文件不提供虚假预览入口')
+})
+
+t('顾问专用卡片：嵌套结果取 content，摘要始终可见，过程与产出分区', () => {
+  const react = {
+    createElement: (type, props, ...children) => ({ type, props, children }), Fragment: 'Fragment',
+    useState: (value) => [value, () => {}], useRef: (value) => ({ current: value }), useEffect: () => {}, useCallback: (f) => f, useMemo: (f) => f(),
+  }
+  const { calls, mod } = loadClientModule(undefined, react)
+  const cell = calls.find(c => c.def && c.def.key === 'consult_task')
+  ok(cell, '根调用和 PTC 子调用按同一个 key 分发，必须真的注册 consult_task')
+  const value = { ok: true, mode: 'review_result', ms: 1000, model: 'p/m', toolCalls: 3,
+    usage: { in: 12450, out: 3676, cache: 25344, total: 41470 },
+    report: { verdict: 'gaps', summary: '缺少浏览器验收证据',
+    checks: [{ criterion: '能操控', status: 'unverified', evidenceRefs: ['E2'] }],
+    findings: [], nextStep: '让用户实测', stopCondition: '不要重复截图' } }
+  // 嵌套 result 没有 meta。必须用 content JSON，不允许猜 block.value/block.data。
+  const props = { phase: 'result', callId: 'nested-1', sessionId: 's1',
+    block: { call: { argsRaw: JSON.stringify({ mode: 'review_result', question: '验收操控' }) },
+      content: [{ type: 'text', text: JSON.stringify(value) }] },
+    useDisclosure: () => ({ expanded: false, toggle() {} }) }
+  eq(mod.__debug.advisorValueOf(props.block).report.summary, value.report.summary, '能读到嵌套结果')
+  const walk = (node) => !node || typeof node !== 'object' ? [] : [node].concat((node.children || []).flat(Infinity).flatMap(walk))
+  const textOf = node => typeof node === 'string' ? node : !node || typeof node !== 'object' ? '' : (node.children || []).flat(Infinity).map(textOf).join(' ')
+  const folded = cell.Comp(props)
+  ok(textOf(folded).includes('有缺口'), '不展开也能看到结论')
+  ok(textOf(folded).includes(value.report.summary), '摘要不藏在展开区域')
+  ok(!walk(folded).some(n => n.props && n.props['data-po06-advisor-details']), '折叠时长过程不占屏')
+  const expanded = cell.Comp({ ...props, useDisclosure: () => ({ expanded: true, toggle() {} }) })
+  ok(textOf(expanded).includes('原 AI 询问内容') && textOf(expanded).includes('顾问思考内容') && textOf(expanded).includes('顾问答复内容') && textOf(expanded).includes('验收结果'), '四个分区必须直接可见')
+  const thinking = walk(expanded).find(n => n.props && n.props['data-po06-advisor-thinking'])
+  const checks = walk(expanded).find(n => n.props && n.props['data-po06-advisor-checks'])
+  eq(thinking.type, 'details', '思考必须独立折叠')
+  eq(checks.type, 'details', '验收必须独立折叠')
+  eq(thinking.props.open, false, '思考默认收起，减少视觉噪音')
+  eq(checks.props.open, false, '验收默认收起')
+  ok(textOf(expanded).includes('待验证'), '收起时仍可见验收概况')
+  // 直观性：状态色点 + 进度条 + 运行中默认展开思考（收起时也能一眼看出成没成）
+  eq(mod.__debug.advisorProgressPct(150, true), 0.5, '兜底上限 300s ⇒ 150s 走一半')
+  eq(mod.__debug.advisorProgressPct(50, true, 100000), 0.5, '有本轮限时记录时按它换算（100s 的一半）')
+  eq(mod.__debug.advisorProgressPct(999, true), 0.97, '没结束不画满')
+  eq(mod.__debug.advisorProgressPct(30, false), null, '跑完了不画进度条')
+  ok(walk(folded).some(n => n.props && n.props.role === 'status' && (n.children || []).some(c => c && c.props && c.props['aria-hidden'])), '状态旁要有色点')
+  // 强调：标题与四个分区题干用主题色 + 加粗（其余保持灰阶 ⇒ 灰度下仍分得出区块）
+  const ACCENT = 'var(--po06-acc)'
+  const labelEls = walk(folded).flatMap(n => (n.children || []).flat(Infinity)).filter(x => typeof x === 'string')
+  for (const text of ['原 AI 询问内容', '顾问答复内容']) {
+    const host = walk(folded).find(n => n.props && n.props.style && n.props.style.color === ACCENT
+      && (n.children || []).flat(Infinity).includes(text))
+    ok(host, text + ' 的题干要用主题色')
+    eq(host.props.style.fontWeight, 600, text + ' 的题干要加粗')
+  }
+  const sums = walk(folded).filter(n => n.type === 'summary')
+  eq(sums.length >= 2, true, '思考与验收各有一个题干')
+  ok(sums.every(s => s.props.style.color === ACCENT && s.props.style.fontWeight === 600), '两个折叠题干同样是主题色加粗')
+  const titleEl = walk(folded).find(n => n.props && n.props.style && n.props.style.color === ACCENT && n.props.style.fontSize === '13.5px')
+  ok(titleEl, '卡片标题要用主题色')
+  // 用量（走 A）：页脚显示这次咨询的 token，且注明是插件自己的账
+  const usageEl = walk(folded).find(n => n.props && n.props['data-po06-advisor-usage'])
+  ok(usageEl, '页脚要有 token 用量')
+  ok(textOf(usageEl).includes('41.5k'), '过千用 k 显示，实际=' + textOf(usageEl))
+  ok(textOf(usageEl).includes('入') && textOf(usageEl).includes('出') && textOf(usageEl).includes('缓存'), '要区分 输入/输出/缓存命中')
+  ok(/不计入 DSH/.test(String(usageEl.props.title || '')), '必须注明这是插件的账、不进 DSH 统计')
+  ok(walk(folded).some(n => n.props && n.props['data-po06-advisor-meta']), '页脚元信息行要在')
+  const live = cell.Comp({ phase: 'preparing', callId: 'live-1', sessionId: 's1', block: {} })
+  const liveThink = walk(live).find(n => n.props && n.props['data-po06-advisor-thinking'])
+  eq(liveThink.props.open, true, '运行中默认展开思考，实时思维链不用手动点')
+  eq(mod.__debug.advisorDraftReply('{"summary":"正在核对证据'), '正在核对证据', '正在生成的 summary 可实时显示为人话')
+  ok(walk(expanded).some(n => n.props && n.props['data-po06-advisor-output']), '有独立产出区')
+  const partial = cell.Comp({ ...props, block: { ...props.block, content: [{ type: 'text', text: JSON.stringify({ ...value, partial: true }) }] } })
+  ok(textOf(partial).includes('不作为完整验收通过'), '中止不能渲染成普通通过')
+  cell.Comp({ phase: 'preparing', callId: 'p', sessionId: 's1', block: {} })
+})
+
 t('虚拟 POSIX 卡片：注册了 keyed 视图，带专属图标与徽标，且缺字段不崩', () => {
   const { calls } = loadClientModule()
   const cell = calls.filter((c) => c.def && c.def.name === 'tool.call.toolview')[0]

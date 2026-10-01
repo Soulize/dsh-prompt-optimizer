@@ -19,6 +19,8 @@
 | [PLAN-0.6.md](PLAN-0.6.md) | 0.6 架构重做 |
 | [PLAN-0.7.0-beta.1.md](PLAN-0.7.0-beta.1.md) | 0.7.0 |
 | [PLAN-0.7.1.md](PLAN-0.7.1.md) | 0.7.1 |
+| [0.7.9plan.md](0.7.9plan.md) | 0.7.9 单轮独立顾问（本地待测） |
+| [PLAN-BASH-RELIABILITY.md](PLAN-BASH-RELIABILITY.md) | Bash 可靠性整改（本地已实施，待重启手测） |
 
 ## 过程记录
 

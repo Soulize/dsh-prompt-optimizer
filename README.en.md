@@ -1,4 +1,4 @@
-# dsh-prompt-optimizer **v0.7.8** · Prompt Optimizer (DSH Web plugin)
+# dsh-arbiter-wf **v0.8.0-preview** · Independent Arbiter Layer (DSH Web plugin)
 
 **English** ｜ [中文](README.md)
 
@@ -19,21 +19,21 @@ showpiece-quality.
 >
 > | Channel | What it is | Use it? |
 > |---|---|---|
-> | **GitHub Release asset** | The current version (`@dsh-external/dsh-po06`) | ✅ **The only correct source** — the command below |
+> | **GitHub Release asset** | The current version (`@dsh-external/dsh-arbiter-wf`) | ✅ **The only correct source** — the command below |
 > | **npm** | **This plugin is not published to npm** (`private: true`); it ships via Releases only.
 >  Any same-named or similar package on the registry **is not this project**. | ❌ Do not install from npm |
 > | Cloning the repo root | Same source as this Release, for developers | ⚠️ You must build it yourself; Releases are easier for normal use |
 >
 > Looking for versions 0.1–0.6? See [`old/`](old/README.md) (per-generation notes and download methods).
 > Want to publish a release yourself? See [`docs/RELEASING.md`](docs/RELEASING.md) (9-step procedure + checklist).
-> ### Install 0.7.8 in 30 seconds
+> ### Install 0.8.0-preview in 30 seconds
 >
 > ```powershell
-> $v = '0.7.8'; $d = "$env:USERPROFILE\Downloads"
-> Invoke-WebRequest "https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/download/v$v/dsh-external-dsh-po06-$v.tgz" -OutFile "$d\dsh-external-dsh-po06-$v.tgz"
+> $v = '0.8.0-preview'; $d = "$env:USERPROFILE\Downloads"
+> Invoke-WebRequest "https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/download/v$v/dsh-external-dsh-arbiter-wf-$v.tgz" -OutFile "$d\dsh-external-dsh-arbiter-wf-$v.tgz"
 > Get-Content "$d\SHA256SUMS-$v.txt"     # compare the sha256 with the tgz you just downloaded (same file as on the Release page)
 > dsh --profile po061 --from-default-profile web --dump-config        # a clean profile
-> dsh plugin --profile po061 add "$d\dsh-external-dsh-po06-$v.tgz"    # install
+> dsh plugin --profile po061 add "$d\dsh-external-dsh-arbiter-wf-$v.tgz"    # install
 > dsh --profile po061                                                 # start (prints a tokenized URL)
 > ```
 >
@@ -119,7 +119,7 @@ theme** as well, switching live.
 
 **Does reading project files touch anything?** No: read-only, confined to your working directory, anything outside is refused.
 
-**Turning it off / uninstalling?** Temporarily: set the tier to `off` (no interception, no injection). Fully: remove `@dsh-external/dsh-po06` from the profile's `dsh.profile.bundles` and `dependencies`, restart DSH; its config lives in `<home>/po06.json` and you can delete it.
+**Turning it off / uninstalling?** Temporarily: set the tier to `off` (no interception, no injection). Fully: remove `@dsh-external/dsh-arbiter-wf` from the profile's `dsh.profile.bundles` and `dependencies`, restart DSH; its config lives in `<home>/po06.json` and you can delete it.
 
 ## Privacy and boundaries
 
@@ -142,16 +142,26 @@ theme** as well, switching live.
   consumption and save cost**.
 - ⚠️ **The capability is still experimental** — treat it as something you can install, try, and switch off at any time,
   **not as an upgrade**.
-- 📌 What `0.7.8` fixes (all real-machine reports): ① "thinking finished but no packet" (empty results are
-  backfilled ⇒ every round yields a packet); ② light mode now drives colours from the theme; ③ UI language follows DSH;
-  ④ the enable decision (`rollout` missing/misspelled no longer silently disables an explicit `enabled:true`);
-  ⑤ data loss where one settings write reset the whole config (UTF-8 BOM read fix). Details: [`CHANGELOG.md`](CHANGELOG.md).
+- 📌 What `0.8.0-preview` changes: ① **independent advisor `consult_task`** — a second model instance reviews only raw evidence
+  and your original words, by dimension (geometry / appearance / code / interaction / performance / delivery coverage / custom),
+  with per-item coverage checks and **real file & image evidence** (images are attached only when the host confirms the model
+  accepts them, otherwise explicitly marked "not inspected");
+  ② **built-in Bash reliability** — cancellation finally reaches the child, each call gets its own output files, failures keep
+  stdout/stderr, the exit marker moved back to the end, handles are released, logs are read by window, runtime probing is
+  cancellable and briefly cached;
+  ③ **slash-command allowlist `slashReview`** — only listed commands that the host confirms are registered go through
+  "intercept → optimise → editable confirm"; host commands and unregistered ones still go straight through;
+  ④ **advisor card token count fixed** — the footer used to always show `Σ — tok`; it now shows the total and in/out/cache;
+  ⑤ **shell-choice wording rewritten** — the unmeasured "pwsh is faster" claim is gone; the choice is by command nature, and
+  "bash is usually steadier" is labelled as experience, not measurement;
+  ⑥ **rename** — the plugin is now `dsh-arbiter-wf` (was `dsh-po06`); config and ledger file names are unchanged, so no
+  settings migration is needed. Details: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Versions and evidence
 
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md) ｜ manual acceptance: [`po06/HUMAN-TEST.md`](po06/HUMAN-TEST.md) ｜
   release log (including every install drill actually run): [`po06/RELEASE-CHECKLIST.md`](po06/RELEASE-CHECKLIST.md)
-- Install and self-check: [`po06/README.md`](po06/README.md) ｜ current Release: **[v0.7.8](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.7.8)**
+- Install and self-check: [`po06/README.md`](po06/README.md) ｜ current Release: **[v0.8.0-preview](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.8.0-preview)**
 - Compatibility: `dsh-0.1.6-alpha.1` (`0.1.5-rc.1` also runs) ｜ author: 啃轮胎的西狐
 - **Previous generation (the 0.5 line — still usable, no longer updated)**: a **different package**,
   `@dsh-external/dsh-prompt-optimizer`, last published `v0.5.0-beta.1`; design and usage in [`SPEC.md`](SPEC.md),

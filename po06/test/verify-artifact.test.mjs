@@ -78,8 +78,14 @@ function buildTgz(fx, opts = {}) {
     mkdirSync(dirname(join(pkgStage, rel)), { recursive: true })
     writeFileSync(join(pkgStage, rel), text)
   }
-  const out = join(stage, opts.asName || fx.tgzName)
-  execFileSync('tar', ['-czf', out, '-C', stage, 'package'])
+  // ⚠ 打包必须**只给相对路径**（2026-10-01 真机）：MSYS 的 GNU tar 会把 Windows 绝对路径里的冒号
+  //   当成「远程主机」→ `tar (child): Cannot connect to C: resolve failed`；而 Windows 自带的
+  //   bsdtar 能直接吃绝对路径。同一套测试在 bash 下红、在 pwsh 下绿，根源就在这里。
+  //   做法：cwd 切到暂存目录、归档名用相对路径 —— 两种 tar 都能跑，也不再依赖 --force-local。
+  const name = opts.asName || fx.tgzName
+  mkdirSync(dirname(join(stage, name)), { recursive: true })
+  execFileSync('tar', ['-czf', name, 'package'], { cwd: stage })
+  const out = join(stage, name)
   return { path: out, sha256: sha256(readFileSync(out)), bytes: readFileSync(out).length }
 }
 

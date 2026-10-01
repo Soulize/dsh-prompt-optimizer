@@ -19,8 +19,8 @@ test('吞错型连接符 + 段数≥3 才出声：&& 不算吞错', () => {
   assert.equal(chainFinding('ls; pwd'), '', '两段不出声')
   const f1 = chainFinding('cd x && node a.js; node b.js | tee log')
   assert.ok(f1, '三段 + 吞错连接符 ⇒ 出声')
-  assert.ok(/吞掉失败/.test(f1), '要点明失败会被吞')
-  assert.ok(/看不出来/.test(f1), '要点明"不自知"')
+  assert.ok(/风险/.test(f1), '链结构只报风险')
+  assert.ok(/pipefail|set -e/.test(f1), '不能忽略shell失败传播策略')
 })
 
 test('重武器：识别这一次的形态，并给出可照做的替代路', () => {
@@ -40,14 +40,14 @@ test('组合反馈：快且有产出不打扰，长/空/失败/超时都出声',
   assert.ok(/本次耗时 185s/.test(slow))
   const failed = usageNote({ ms: 900, command: 'cd x && node a.js; node b.js | tee l', outLen: 0, failed: true })
   assert.ok(/失败/.test(failed), '失败要写明')
-  assert.ok(/吞掉失败/.test(failed), '失败时更要给出链判定（哪一段死了看不出来）')
+  assert.ok(/不能仅凭链结构断言/.test(failed), '失败时仍不能绝对断言吞错')
   const to = usageNote({ ms: 600000, command: 'node -e "puppeteer"', outLen: 0, timedOut: true })
   assert.ok(/无头浏览器/.test(to), '超时 + 重武器 ⇒ 两件事一起给')
   assert.ok(/本次耗时 600s/.test(to))
 })
 
 test('既有行为不回退：吞输出仍触发，costNote 语义未变', () => {
-  assert.ok(usageNote({ ms: 1000, command: 'node a.js >/dev/null', outLen: 5000 }), '吞输出仍出声')
+  assert.equal(usageNote({ ms: 1000, command: 'node a.js >/dev/null', outLen: 5000 }), '', '快成功不能仅因重定向出声')
   assert.equal(costNote(5000, 'ls', 120), '')
   assert.ok(costNote(185000, 'node a.js', 0), 'costNote 仍是"慢+少产出"判据')
 })

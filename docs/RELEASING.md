@@ -23,6 +23,21 @@ dsh-prompt-optimizer/
 3. **历史版本只进 `old/`**，仓库根不放任何 `.tgz`、不放旧源码；
 4. **README 里的安装指向 = Release 的最新版**，两者必须同一版本号。
 
+### 本机运行侧：始终跟随开发目录（**不要**为了"干净"去装 tgz）
+
+本机的 `profiles/web` 用 **link 装配**开发目录，而不是装发布包：
+
+- `profiles/web/package.json` → `"@dsh-external/dsh-arbiter-wf": "link:C:/Users/WestFox/.dsh/plugins/dsh-prompt-optimizer"`（2026-10-01 由 `dsh-po06` 改名）
+- `profiles/web/node_modules/@dsh-external/dsh-arbiter-wf` 是指向开发目录的 junction（`isSymlink=true`）
+- 于是**改完开发目录 + 重启（或 `dev_reload_package` 热重载），运行的就是最新那一份**，不需要每次重装。
+
+⚠ **实测踩过的坑（2026-09-30）**：这条依赖曾被钉在 `file:...dsh-external-dsh-po06-0.7.4.tgz`，于是出现
+"界面上没有 0.7.8 才加的「协作基调」，而开发目录的代码明明是新的" —— **跑的是老版本，改动一次都没生效**。
+唯一的判断办法：读运行侧那份的 `po06/package.json` 的 `version`，与开发目录比对。
+备份见 `profiles/web/package.json.bak-po06-0.7.4`。
+
+发布（下面第 5~9 步）只决定**访客的下载入口**，与本机运行侧无关；发布后**不要**顺手把本机也装成 tgz —— 那会把链接顶掉，再次跑回老版本。
+
 ## 二、日常开发（不发布）
 
 ```bash
@@ -30,7 +45,7 @@ cd po06
 node --test test/            # 或逐套跑：node test/xxx.test.mjs
 ```
 
-**核对**：全部用例通过（当前基线 **49 套**）。有任何一套红，先修再谈发布。
+**核对**：全部用例通过（当前基线 **71 套 / 209 项**，`node --test po06/test/*.test.mjs`；bash 与 pwsh 两种 shell 下均需全绿）。有任何一套红，先修再谈发布。
 
 改源码只改 `po06/` 下的东西。`old/` 只读，不修历史版本。
 
@@ -139,7 +154,7 @@ node po06-beta/make-release.mjs
 [ ] 2  CHANGELOG.md 顶部有对应一节
 [ ] 3  README 里旧版本号已全部替换（搜过）
 [ ] 3b README / docs 里的**相对链接逐个确认文件存在**（移动过文件时尤其重要）
-[ ] 4  49 套测试全绿
+[ ] 4  71 套测试全绿（209 项；bash 与 pwsh 都跑过）
 [ ] 5  npm pack 产物里 name/version/main 正确、runtime 与 patch 都在
 [ ] 6  已提交，工作树干净，且**推的是 main**
 [ ] 7  tag 已打并推到远程
