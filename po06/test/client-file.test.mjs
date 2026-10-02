@@ -47,7 +47,7 @@ t('client.js 存在、语法通过、用宿主的模块加载器格式注册且 
   // 语法：node --check 能解析（它引用了 window，但只解析不执行）
   execFileSync(process.execPath, ['--check', CLIENT], { stdio: 'pipe' })
   ok(/window\.__ModuleLoader__\.load\(\{/.test(src), '必须是 __ModuleLoader__.load({...}) 形式')
-  ok(/id:\s*'@dsh-external\/dsh-arbiter-wf'/.test(src), 'load 的 id 必须与包名一致')
+ok(new RegExp("id:\\s*'" + pkg.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'").test(src), 'load 的 id 必须与 package.json 的 name 一致（改名最容易漏的一处：漂移会让整条 entry 装配失败）')
   ok(/factory:\s*\(require\)\s*=>/.test(src), '必须是 factory(require) 形式')
   ok(/require\('react'\)/.test(src), '宿主页面提供 react，用 require 取')
   ok(/return module\.exports/.test(src), '必须返回 module.exports')
