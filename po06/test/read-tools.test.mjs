@@ -220,6 +220,28 @@ t('只认旧形状的宿主 ⇒ 退回 user + tool-result 块（代次差异只�
   eq(toolResultMessages([{ id: 'c' }], [{}], null).length, 0, '形状未知时不造消息（宁可不发，也不发模型读不懂的）')
 })
 
+
+// ── ⑩ issue #22：工具产出是「JSON + 中间散文 + JSON 尾巴」的混合体时**必须回落** ──
+// 修前判据是 /"ops"\s*:/ 子串命中即接受 ⇒ 接受工具路径产出 ⇒ **跳过回落** ⇒
+// pipeline 取首个 { 到末个 } 去 parse、撞上中间散文 ⇒ BAD_JSON ⇒ 空包 ⇒ 界面「失败：no-packet」。
+// 下面的 mixed 就是那条 issue 里贴的实机形态（合法 JSON 头 + 散文 + JSON 尾巴）。
+t('JSON+散文混合体不得被判为可用 JSON（issue #22：必须回落重跑）', async () => {
+  const NL = String.fromCharCode(10)
+  const root = tmpRoot()
+  const mixed = '{"ops":[{"op":"noop"}]}' + NL + NL + '等一下 —— 上面这个 ops 我自查出了问题：中间这段是散文。' + NL + '{"hardNote":"x"}'
+  const llm = stubLlm([
+    [...toolCall('c1', 'read', { path: 'note.txt' }), finish()],
+    [textDelta(mixed), finish()],
+    [textDelta('{"ops":[]}'), finish()],
+  ])
+  const r = await interpretViaLlm({
+    llm, cfg: { provider: 'p', model: 'm' }, userPrompt: 'x',
+    system: 'S+TOOLS', systemNoTools: 'S', tools: { enabled: true, root, count: 2, reason: 'enabled' },
+  })
+  eq(r.via, 'tools-fallback', '混合体必须回落（修前会被误判成 tools 并跳过回落）：' + JSON.stringify({ via: r.via, err: r.error }))
+  ok(llm.calls.length >= 3, '回落确实又调了一次模型（代价要真实发生）：' + llm.calls.length)
+  ok(String(r.context && r.context.toolLoopError).includes('bad-json'), '错因要能归因到 BAD_JSON：' + JSON.stringify(r.context && r.context.toolLoopError))
+})
 await Promise.all(pending)
 console.log(JSON.stringify({
   suite: 'po06-read-tools', phase: 'P10',

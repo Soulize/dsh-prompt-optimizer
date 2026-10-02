@@ -40,6 +40,8 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { toolResultShape, loadLlmLib } from './llm-lib.js'
+import { createHash } from 'node:crypto'
+import { readBounded } from './advisor-materials.js'
 import { runPosix, SUPPORTED_COMMANDS, SUPPORTED_OPERATORS } from './posix.js'
 
 /** 文件大小上限：超过直接拒绝（0.5 的 LOOP_MAX_FILE_BYTES）。 */
@@ -216,7 +218,8 @@ export function toolRead(root, args) {
     const info = statSync(abs)
     if (!info.isFile()) return ok('不是文件：' + String(a.path))
     if (info.size > MAX_FILE_BYTES) return ok('拒绝：文件过大（>' + MAX_FILE_BYTES + ' 字节，本次 ' + info.size + ' 字节）')
-    const lines = readFileSync(abs, 'utf8').split('\n')
+    const bytes=readBounded(root,String(a.path),MAX_FILE_BYTES).data
+    const lines = bytes.toString('utf8').split('\n')
     const startRaw = a.startLine === undefined || a.startLine === null ? 1 : Number(a.startLine)
     const endRaw = a.endLine === undefined || a.endLine === null ? startRaw + DEFAULT_READ_LINES - 1 : Number(a.endLine)
     if (!Number.isFinite(startRaw) || !Number.isFinite(endRaw)) return reject('拒绝：startLine/endLine 必须是数字')
@@ -225,7 +228,9 @@ export function toolRead(root, args) {
     const slice = end >= start ? lines.slice(start - 1, end) : []
     const body = slice.map((line, i) => String(start + i).padStart(5, ' ') + '| ' + line).join('\n')
     const head = '文件 ' + String(a.path) + '（共 ' + lines.length + ' 行，返回 ' + start + '-' + end + '）'
-    return ok(capText(head + '\n' + body))
+    const full=head+'\n'+body,text=capText(full)
+    const ref='read:'+String(a.path).replaceAll(String.fromCharCode(92),'/')
+    return {...ok(text),evidence:{ref,path:String(a.path),sha256:createHash('sha256').update(bytes).digest('hex'),kind:'file',status:full===text?'ready':'truncated',selectionComplete:full===text,wholeFileComplete:start===1 && end===lines.length && full===text,startLine:start,endLine:end}}
   } catch (e) {
     return ok('读取失败：' + String((e && e.message) || e))
   }
@@ -508,6 +513,10 @@ export async function runReadOnlyToolLoop(opts) {
         content: [{ type: 'text', text: o.finalNote || '【系统】已达本次查证轮次上限，请立即用已获得的证据给出 JSON 产出，不要再请求工具。' }],
       })
     }
+    if(typeof o.evidenceNote==='function') {
+      const note=o.evidenceNote(trace)
+      if(note)messages.push({role:'user',content:[{type:'text',text:String(note)}]})
+    }
     const rt = now()
     notify({ kind: 'round', round, final: !useTools })
     let stream = null
@@ -551,6 +560,7 @@ export async function runReadOnlyToolLoop(opts) {
         ms: now() - st,
         resultLines: String(res.text).split('\n').length,
         resultAvailable: call.name === 'read' && res.ok && String(res.text).startsWith('文件 '),
+        evidence:res.evidence || null,
       })
       notify({ kind: 'tool', round, tool: call.name, target: args.path || args.pattern || args.command || '',
         ok: res.ok === true && res.rejected !== true, ms: now() - st })

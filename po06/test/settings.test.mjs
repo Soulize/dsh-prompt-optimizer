@@ -135,11 +135,13 @@ t('writeSettings：坏 JSON ⇒ 原文备份 + 从备份捞回"启用意图"字�
   ok(good.backup, '有备份：' + good.backup)
   // 再把主文件写坏，模拟"读不出来"（BOM / 半截 / 手改坏）
   writeFileSync(p, '{ 这是坏的', 'utf8')
-  const r = writeSettings({ path: p, patch: { assist: 'off' }, now: 9 })
+  // ⚠ 刻意用**非档位键**（permission）：issue #16 之后写档位键会同步"启用意图"，那是另一条语义；
+  //   本条要钉的是"坏文件读不出来时不许丢启用字段"，两者必须各自独立可验证。
+  const r = writeSettings({ path: p, patch: { permission: 'auto' }, now: 9 })
   eq(r.ok, true, '坏文件按"空配置"处理并写入，但**必须**能从备份取回')
   eq(readFileSync(r.backup, 'utf8'), '{ 这是坏的', '原文进了备份（可回滚）')
   const now = JSON.parse(readFileSync(p, 'utf8'))
-  eq(now.assist, 'off', '写入的是我们归一化后的结果')
+  eq(now.permission, 'auto', '写入的是我们归一化后的结果')
   // ⚠ 判据更新（2026-09-22 真机：配置被一次设置写入**重置成默认值**，启用字段全丢 ⇒ 插件静默不启用）：
   //   `settingsVersion` 是"这份配置是 0.6 写的"这个标记，**必须有**，否则插件再也不被认作自己的配置；
   //   `enabled`/`rollout` 也在读不出来时从最近备份捞回来（**不凭空造**）。
@@ -180,6 +182,56 @@ t('describeSettings：给界面的是**行为描述**，不是内部枚举值', 
   for (const [k, v] of Object.entries(describeSettings({}))) {
     if (k === 'tier') continue
     ok(!/standard|generous|detailed|minimal/.test(String(v)) || v === '标准' || v === '标准补充', '摘要里不该出现原始枚举值：' + k + '=' + v)
+  }
+})
+
+
+// ── ③b issue #16：写档位**必须**同步"启用意图"，否则面板永远开不了插件 ────────
+// 报告者实测（0.7.6，只动面板）：`/status` 恒 `enabled:false / rollout:"off" / rolloutDefaulted:true`，
+// 台账 43 条 `reason:"gate-disabled" / gate:"rollout-off"`、成功包 0 条 —— 因为**全包没有任何代码**
+// 会写 `enabled:true`（`GATE_KEYS` 只是"原样保留"）。下面把四条边界都钉住。
+t('写档位 ⇒ 自动补 enabled:true / rollout:all（全新安装的"面板拨档位"路径）', () => {
+  const dir = tmp(); const p = join(dir, 'po06.json')
+  // 全新安装：文件里**没有** enabled/rollout（这正是报告者的现场）
+  writeFileSync(p, JSON.stringify({ settingsVersion: 1 }, null, 2) + '\n', 'utf8')
+  const r = writeSettings({ path: p, patch: { tier: 'standard' }, now: 21 })
+  eq(r.ok, true, '写入成功：' + JSON.stringify(r))
+  const now = JSON.parse(readFileSync(p, 'utf8'))
+  eq(now.enabled, true, '写档位必须把启用意图写出来（否则 gate:rollout-off）')
+  eq(now.rollout && now.rollout.mode, 'all', 'rollout 也要补齐（闸门只认这两个字段）')
+  eq(now.settingsVersion, 1, '0.6 自己的配置标记仍在')
+})
+
+t('档位="关闭" ⇒ 显式写 enabled:false + rollout:{mode:off}（理由码是用户的选择）', () => {
+  const dir = tmp(); const p = join(dir, 'po06.json')
+  writeFileSync(p, JSON.stringify({ settingsVersion: 1, enabled: true, rollout: { mode: 'all' } }), 'utf8')
+  const r = writeSettings({ path: p, patch: { tier: 'off' }, now: 22 })
+  eq(r.ok, true, '写入成功')
+  const now = JSON.parse(readFileSync(p, 'utf8'))
+  eq(now.enabled, false, '关档要真的关')
+  eq(now.rollout && now.rollout.mode, 'off', '写显式 off（不是回落来的 off）')
+})
+
+t('灰度名单不许被档位写入动到（只补 enabled，名单原样）', () => {
+  const dir = tmp(); const p = join(dir, 'po06.json')
+  writeFileSync(p, JSON.stringify({ settingsVersion: 1, enabled: false, rollout: { mode: 'allowlist', sessions: ['s-1'] } }), 'utf8')
+  const r = writeSettings({ path: p, patch: { tier: 'light' }, now: 23 })
+  eq(r.ok, true, '写入成功')
+  const now = JSON.parse(readFileSync(p, 'utf8'))
+  eq(now.enabled, true, '用户拨了非关闭档 ⇒ 应当启用')
+  eq(now.rollout && now.rollout.mode, 'allowlist', '**不得**把灰度名单改成 all')
+  eq(JSON.stringify(now.rollout.sessions), JSON.stringify(['s-1']), '名单内容也不许动')
+})
+
+t('改非档位项（模型/权限/上下文/bash）不碰启用意图', () => {
+  const dir = tmp(); const p = join(dir, 'po06.json')
+  writeFileSync(p, JSON.stringify({ settingsVersion: 1, enabled: false, rollout: { mode: 'off' } }), 'utf8')
+  for (const patch of [{ permission: 'review' }, { model: { provider: 'p', model: 'm' } }, { readTools: true }, { bash: false }, { turns: 3 }]) {
+    const r = writeSettings({ path: p, patch, now: 24 })
+    eq(r.ok, true, '写入成功：' + JSON.stringify(patch))
+    const now = JSON.parse(readFileSync(p, 'utf8'))
+    eq(now.enabled, false, '改 ' + JSON.stringify(patch) + ' 不该顺手把插件打开')
+    eq(now.rollout && now.rollout.mode, 'off', 'rollout 同样不动')
   }
 })
 

@@ -1,4 +1,4 @@
-# dsh-arbiter-wf **v0.8.0-preview** · Independent Arbiter Layer (DSH Web plugin)
+# dsh-arbiter-wf **v0.8.1-stable** · Independent Arbiter Layer (DSH Web plugin)
 
 **English** ｜ [中文](README.md)
 
@@ -27,10 +27,10 @@ showpiece-quality.
 >
 > Looking for versions 0.1–0.6? See [`old/`](old/README.md) (per-generation notes and download methods).
 > Want to publish a release yourself? See [`docs/RELEASING.md`](docs/RELEASING.md) (9-step procedure + checklist).
-> ### Install 0.8.0-preview in 30 seconds
+> ### Install 0.8.1-stable in 30 seconds
 >
 > ```powershell
-> $v = '0.8.0-preview'; $d = "$env:USERPROFILE\Downloads"
+> $v = '0.8.1-stable'; $d = "$env:USERPROFILE\Downloads"
 > Invoke-WebRequest "https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/download/v$v/dsh-external-dsh-arbiter-wf-$v.tgz" -OutFile "$d\dsh-external-dsh-arbiter-wf-$v.tgz"
 > Get-Content "$d\SHA256SUMS-$v.txt"     # compare the sha256 with the tgz you just downloaded (same file as on the Release page)
 > dsh --profile po061 --from-default-profile web --dump-config        # a clean profile
@@ -143,7 +143,7 @@ theme** as well, switching live.
   consumption and save cost**.
 - ⚠️ **The capability is still experimental** — treat it as something you can install, try, and switch off at any time,
   **not as an upgrade**.
-- 📌 What `0.8.0-preview` changes: ① **independent advisor `consult_task`** — a second model instance reviews only raw evidence
+- 📌 What `0.8.1-stable` changes: ⓪ **Assembly fix (important — switch to this build if you installed `0.8.0-preview`)** — the previous artifact shipped a client registration id that was not renamed together with the package name, and the host requires the two to match, so the **entire client half never activated** (no panel, no cards, no settings tab; the host logs `loaded without registering`). This build aligns all three identity points plus the bundle entry name and adds a gate test that reads the name from `package.json` dynamically. ① **independent advisor `consult_task`** — a second model instance reviews only raw evidence
   and your original words, by dimension (geometry / appearance / code / interaction / performance / delivery coverage / custom),
   with per-item coverage checks and **real file & image evidence** (images are attached only when the host confirms the model
   accepts them, otherwise explicitly marked "not inspected");
@@ -162,11 +162,11 @@ theme** as well, switching live.
 
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md) ｜ manual acceptance: [`po06/HUMAN-TEST.md`](po06/HUMAN-TEST.md) ｜
   release log (including every install drill actually run): [`po06/RELEASE-CHECKLIST.md`](po06/RELEASE-CHECKLIST.md)
-- Install and self-check: [`po06/README.md`](po06/README.md) ｜ current Release: **[v0.8.0-preview](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.8.0-preview)**
+- Install and self-check: [`po06/README.md`](po06/README.md) ｜ current Release: **[v0.8.1-stable](https://github.com/WestFox-AwA/dsh-prompt-optimizer/releases/tag/v0.8.0-preview)**
 - Compatibility: `dsh-0.1.6-alpha.1` (`0.1.5-rc.1` also runs) ｜ author: 啃轮胎的西狐
 - **Previous generation (the 0.5 line — still usable, no longer updated)**: a **different package**,
-  `@dsh-external/dsh-prompt-optimizer`, last published `v0.5.0-beta.1`; design and usage in [`SPEC.md`](SPEC.md),
-  historical documentation (including the 0.5 measurements) in **[`README-0.5.en.md`](README-0.5.en.md)** —
+  `@dsh-external/dsh-prompt-optimizer`, last published `v0.5.0-beta.1`; design and usage in [`SPEC.md`](docs/SPEC.md),
+  historical documentation (including the 0.5 measurements) in **[`README-0.5.en.md`](old/0.5/README.en.md)** —
   those numbers belong to **0.5 only** and are not evidence for 0.6.
 
 ## License

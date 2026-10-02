@@ -679,6 +679,16 @@
       "path": "usr/bin/yes.exe",
       "sha256": "d7fafc94aeb84be6a6d7dfb6037677638fa49848b1f750cbb735070428209cbd",
       "bytes": 33823
+    },
+    {
+      "path": "etc/fstab",
+      "sha256": "097333df9135e53db764fa3b8d61dcbd5fd49ab25af97a831f3326ef7570147a",
+      "bytes": 141
+    },
+    {
+      "path": "tmp/.keep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
     }
   ]
 }

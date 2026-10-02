@@ -3,59 +3,31 @@ import assert from 'node:assert/strict'
 import { ADVISOR_PARAMETERS, ADVISOR_TIMEOUT_MS, ADVISOR_TIMEOUT_MIN_MS, ADVISOR_TIMEOUT_MAX_MS, resolveAdvisorTimeoutMs, ADVISOR_SYSTEM } from '../lib/advisor.js'
 import { ADVISOR_WORKFLOW, withAdvisorWorkflow } from '../lib/advisor-workflow.js'
 
-test('工作模型的协议给出风险阶段实际调用、失败诊断与PTC示例，不扩大用户授权',()=>{
-  assert.ok(ADVISOR_WORKFLOW.includes('按风险阶段实际调用'))
-  assert.ok(!ADVISOR_WORKFLOW.includes('必须实际调用一次'))
-  assert.ok(ADVISOR_WORKFLOW.includes('mode="review_result"'))
-  assert.ok(ADVISOR_WORKFLOW.includes('mode="diagnose_failure"'))
-  assert.ok(ADVISOR_WORKFLOW.includes('await tools.consult_task'))
-  assert.ok(ADVISOR_WORKFLOW.includes('不读取其它文件'))
-  assert.ok(ADVISOR_WORKFLOW.includes('不为了凑次数调用'))
-  assert.ok(ADVISOR_WORKFLOW.includes('360000'), '外层预算要按新的限时给（5 分钟 + 60 秒）')
-  assert.ok(ADVISOR_WORKFLOW.includes('DSH_PO06_ADVISOR_TIMEOUT_MS'), '要告诉模型限时可调')
+test('short workflow names executable stage actions, preserves authority and avoids fixed review counts',()=>{
+ assert.ok(ADVISOR_WORKFLOW.length<1700,'重复协议必须保持小预算')
+ for(const token of ['advisor_stage','start_task','define_stage','activate_stage','advance','checkId','taskId','stageId','subjectPaths','diagnose_failure'])assert.ok(ADVISOR_WORKFLOW.includes(token),token)
+ assert.ok(ADVISOR_WORKFLOW.includes('不改变用户技术路线'))
+ assert.ok(ADVISOR_WORKFLOW.includes('不固定堆次数'))
+ assert.ok(ADVISOR_WORKFLOW.includes('失败不是缺证') || ADVISOR_WORKFLOW.includes('failed不是缺证'))
+ assert.ok(ADVISOR_WORKFLOW.includes('不能替用户接受偏差'))
+ assert.ok(ADVISOR_WORKFLOW.includes('不代表整个任务完成'))
 })
-test('专项范围指向具体对象与检查点，delivery 只列任务所需维度',()=>{
-  assert.ok(ADVISOR_WORKFLOW.includes('general（兼容旧调用默认）/geometry/appearance/code/interaction/performance/delivery/custom'))
-  assert.ok(ADVISOR_WORKFLOW.includes('focus 指明具体对象+检查点'))
-  assert.ok(ADVISOR_WORKFLOW.includes('requiredScopes 是数组，仅用于 delivery 所需专项列表'))
-  assert.ok(ADVISOR_WORKFLOW.includes('不强制所有枚举'))
-  assert.ok(ADVISOR_WORKFLOW.includes('scope: "code", focus:'))
+test('evidence rules are compact and do not prescribe new assets or workloads',()=>{
+ for(const token of ['geometry/appearance','源码不能证明运行','截图不能证明交互/性能','软件预览不能证明实际成品','startLine/endLine','截断/缺失','图像能力未知标未检查','已授权材料'])assert.ok(ADVISOR_WORKFLOW.includes(token),token)
+ assert.ok(ADVISOR_WORKFLOW.includes('不开额外网络或重型截图凑材料'))
+ assert.ok(ADVISOR_WORKFLOW.includes('delivery只汇总'))
+ assert.ok(ADVISOR_WORKFLOW.includes('原checkpoint id'))
 })
-test('几何与外观先独立看图，有疑点再同 focus 追源码，不强制新截图',()=>{
-  assert.ok(ADVISOR_WORKFLOW.includes('geometry/appearance 先图片独立审'))
-  assert.ok(ADVISOR_WORKFLOW.includes('不混代码或“全过”历史'))
-  assert.ok(ADVISOR_WORKFLOW.includes('有疑点再调用 scope="code"，以同一 focus 追源码'))
-  assert.ok(ADVISOR_WORKFLOW.includes('不强制启动新截图'))
-  assert.ok(ADVISOR_WORKFLOW.includes('没有可用图片或没有图像能力则相关项标未验证'))
-  assert.ok(ADVISOR_WORKFLOW.includes('交互/帧率不能只靠截图证明'))
+test('PTC example executes consult task and keeps outer timeout margin',()=>{
+ assert.ok(ADVISOR_WORKFLOW.includes('await tools.consult_task'))
+ assert.ok(ADVISOR_WORKFLOW.includes('360000'))
+ assert.ok(ADVISOR_WORKFLOW.includes('多60秒'))
 })
-test('风险节点而非次数触发审查，小任务仅 general 仍可交付',()=>{
-  for (const trigger of ['高风险阶段成形', '返工成本将升', '用户反馈指出偏差', '关键改动']) {
-    assert.ok(ADVISOR_WORKFLOW.includes(trigger), trigger)
-  }
-  assert.ok(ADVISOR_WORKFLOW.includes('不固定堆次数'))
-  assert.ok(ADVISOR_WORKFLOW.includes('小任务可仅一次 scope="general"，不另凑 delivery'))
-})
-test('交付核对本轮覆盖与版本，局部通过不冒充整体通过',()=>{
-  assert.ok(ADVISOR_WORKFLOW.includes('核对本轮覆盖、未解决项、版本变更，不从头全量验收'))
-  assert.ok(ADVISOR_WORKFLOW.includes('局部 pass 不是整体 pass'))
-  assert.ok(ADVISOR_WORKFLOW.includes('本轮ID/材料指纹自动记录'))
-  assert.ok(ADVISOR_WORKFLOW.includes('材料版本变化重审相关项，保留无关项覆盖'))
-  assert.ok(ADVISOR_WORKFLOW.includes('不把旧版本 pass 直接用于新材料'))
-  assert.ok(ADVISOR_WORKFLOW.includes('缺失、未验证或未解决项必须明确保留'))
-})
-test('权限与证据边界和预算保留，不以文案冒充调用记录',()=>{
-  for (const boundary of ['不准扩大任务、权限或联网范围', '只带已存在的本次成果与用户允许的材料', '不为凑材料额外联网或启动重型截图任务', '文件截断部分不得算完整验收', '与files合计最多4份；images最多4张', '外层 timeoutMs 至少比它多 60 秒', '没有调用记录时，不得声称“顾问已验收”']) {
-    assert.ok(ADVISOR_WORKFLOW.includes(boundary), boundary)
-  }
-})
-test('开启时无意图包也保留协议；关闭时不添加协议',()=>{
-  assert.equal(withAdvisorWorkflow('',{injectPacket:true}),ADVISOR_WORKFLOW)
-  assert.ok(withAdvisorWorkflow('原包',{injectPacket:true}).endsWith('原包'))
-  assert.equal(withAdvisorWorkflow('',{injectPacket:false}),'')
-  assert.equal(withAdvisorWorkflow('原包',{injectPacket:false}),'原包')
-  assert.equal(withAdvisorWorkflow('原包',undefined),'原包')
-  assert.equal(withAdvisorWorkflow('原包',{injectPacket:1}),'原包')
+test('context contribution honors off gate and includes bounded feedback only when enabled',()=>{
+ assert.equal(withAdvisorWorkflow('',{injectPacket:true}),ADVISOR_WORKFLOW)
+ assert.ok(withAdvisorWorkflow('packet',{injectPacket:true},'stage').endsWith('packet\n\nstage'))
+ assert.equal(withAdvisorWorkflow('packet',{injectPacket:false},'stage'),'packet')
+ assert.equal(withAdvisorWorkflow('packet',undefined,'stage'),'packet')
 })
 test('顾问限时：默认 5 分钟；环境变量可调并钳制；报告长度设上限',()=>{
   assert.equal(ADVISOR_TIMEOUT_MS, 300000, '默认 5 分钟（150s 真机超时过，太短）')

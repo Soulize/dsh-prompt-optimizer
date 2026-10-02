@@ -11,6 +11,11 @@ export const MATERIAL_IMAGE_BYTES = 5 * 1024 * 1024
 export const MATERIAL_TOTAL_IMAGE_BYTES = 12 * 1024 * 1024
 const mediaTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
 
+const fileEvidenceTypes = new Set(['source', 'test-log', 'runtime-log', 'other'])
+const imageEvidenceTypes = new Set(['runtime-capture', 'software-preview', 'reference', 'other'])
+const validRange = x => ['startLine', 'endLine'].every(key => x[key] === undefined || (Number.isSafeInteger(x[key]) && x[key] > 0))
+  && (x.startLine === undefined || x.endLine === undefined || x.startLine <= x.endLine)
+
 export function validateMaterialInput(args) {
   const descriptor = x => x && typeof x === 'object' && typeof x.path === 'string' && x.path.trim() && x.path.length <= 1000
     && typeof x.purpose === 'string' && x.purpose.trim() && x.purpose.length <= 1200
@@ -18,8 +23,8 @@ export function validateMaterialInput(args) {
   const files = args.files || []
   const images = args.images || []
   if (!Array.isArray(legacy) || !legacy.every(p => typeof p === 'string' && p.trim() && p.length <= 1000)
-    || !Array.isArray(files) || !files.every(descriptor) || legacy.length + files.length > MATERIAL_MAX_FILES) return 'invalid-artifacts'
-  if (!Array.isArray(images) || !images.every(descriptor) || images.length > MATERIAL_MAX_IMAGES) return 'invalid-images'
+    || !Array.isArray(files) || !files.every(x => descriptor(x) && validRange(x) && (x.evidenceType === undefined || fileEvidenceTypes.has(x.evidenceType))) || legacy.length + files.length > MATERIAL_MAX_FILES) return 'invalid-artifacts'
+  if (!Array.isArray(images) || !images.every(x => descriptor(x) && (x.evidenceType === undefined || imageEvidenceTypes.has(x.evidenceType))) || images.length > MATERIAL_MAX_IMAGES) return 'invalid-images'
   return null
 }
 
@@ -35,7 +40,7 @@ export function materialPath(root, path) {
   if (!rel || rel === '..' || rel.startsWith('..' + '/') || rel.startsWith('..' + String.fromCharCode(92)) || isAbsolute(rel)) throw new Error('outside-workspace')
   return actual
 }
-function readBounded(root, path, cap) {
+export function readBounded(root, path, cap) {
   const actual = materialPath(root, path)
   const fd = openSync(actual, 'r')
   try {
@@ -59,34 +64,40 @@ function reasonOf(error) {
 export async function prepareAdvisorMaterials({ args, root, enabled, imageSupport, attachments, signal } = {}) {
   const materials = [], evidence = [], images = [], evidenceIds = new Set(), resultIds = new Set()
   const files = [...(args.artifacts || []).map(path => ({ path, purpose: '本次成果或验证材料' })), ...(args.files || [])]
-  let chars = 0, imageBytes = 0, limited = false
+  const pending = []
+  let imageBytes = 0, limited = false
   const descriptors = [...files.map((d,i)=>({...d,id:'F'+i,kind:'file'})), ...(args.images || []).map((d,i)=>({...d,id:'I'+i,kind:'image'}))]
   for (const descriptor of descriptors) {
     if (signal?.aborted) throw signal.reason || new Error('cancelled')
-    const row = { ...descriptor, status: 'unavailable', sent: false, previewAvailable: false }
+    const row = { ...descriptor, evidenceType: descriptor.evidenceType ?? 'other', status: 'unavailable', sent: false, previewAvailable: false }
+    if (row.kind === 'file') Object.assign(row, { selectionScope: row.startLine !== undefined || row.endLine !== undefined ? 'line-range' : 'whole-file', selectionComplete: false, wholeFileComplete: false })
     materials.push(row)
-    const fail = reason => { row.reason = reason; limited = true; evidence.push({ id: row.id, path: row.path, purpose: row.purpose, status: row.status, reason }) }
+    const fail = reason => { row.reason = reason; limited = true; evidence.push({ id: row.id, path: row.path, purpose: row.purpose, status: row.status, evidenceType: row.evidenceType, selectionScope: row.selectionScope, selectionComplete: row.selectionComplete, wholeFileComplete: row.wholeFileComplete, reason }) }
     if (!enabled || !root) { fail('read-tools-disabled-or-no-cwd'); continue }
     try {
       if (row.kind === 'file') {
+        if (!validRange(row)) { fail('invalid-line-range'); continue }
+        if (!fileEvidenceTypes.has(row.evidenceType)) { fail('invalid-evidence-type'); continue }
         const { data, actual } = readBounded(root, row.path, MATERIAL_FILE_BYTES)
         row.previewAvailable = true; row.previewPath = actual; row.bytes = data.length
         if (data.includes(0)) { fail('binary-file-not-supported'); continue }
         let text
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(data) } catch { fail('text-is-not-utf8'); continue }
-        const available = Math.min(MATERIAL_TEXT_CHARS, Math.max(0, MATERIAL_TOTAL_CHARS - chars))
-        if (!available) { fail('text-budget-exhausted'); continue }
-        const body = text.slice(0, available)
-        chars += body.length
-        row.status = body.length < text.length ? 'truncated' : 'ready'
-        row.truncated = row.status === 'truncated'; row.sent = true
-        row.chars = text.length; row.sentChars = body.length
+        row.chars = text.length
         row.sha256 = createHash('sha256').update(data).digest('hex')
-        row.excerpt = body.slice(0, 2400)
-        evidence.push({ id: row.id, path: row.path, purpose: row.purpose, status: row.status, chars: text.length, sentChars: body.length, text: body })
-        evidenceIds.add(row.id); resultIds.add(row.id)
-        limited ||= row.truncated
+        const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/)
+        if (lines.length > 1 && lines.at(-1) === '') lines.pop()
+        row.totalLines = lines.length
+        row.selectedStartLine = row.startLine ?? 1
+        row.selectedEndLine = row.endLine ?? row.totalLines
+        if (row.selectedStartLine > row.totalLines || row.selectedEndLine > row.totalLines) { fail('line-range-out-of-bounds'); continue }
+        const selected = lines.slice(row.selectedStartLine - 1, row.selectedEndLine).join('')
+        row.selectedChars = selected.length
+        const entry = { id: row.id, path: row.path, purpose: row.purpose, evidenceType: row.evidenceType }
+        evidence.push(entry)
+        pending.push({ row, selected, entry, budget: 0 })
       } else {
+        if (!imageEvidenceTypes.has(row.evidenceType)) { fail('invalid-evidence-type'); continue }
         const type = mediaTypes[extname(row.path).toLowerCase()]
         if (!type) { fail('unsupported-image-format'); continue }
         const { data, actual } = readBounded(root, row.path, MATERIAL_IMAGE_BYTES)
@@ -101,14 +112,41 @@ export async function prepareAdvisorMaterials({ args, root, enabled, imageSuppor
         row.image = { mediaType: attachment.mediaType, bytes: attachment.bytes, width: attachment.width, height: attachment.height,
           resized: !!attachment.originalDimensions }
         row.sha256 = createHash('sha256').update(data).digest('hex')
-        evidence.push({ id: row.id, path: row.path, purpose: row.purpose, status: 'ready', image: row.image })
-        images.push({ type: 'text', text: '图像证据 ' + row.id + '：' + row.path + '；检查用途：' + row.purpose }, { type: 'image', attachment })
+        evidence.push({ id: row.id, path: row.path, purpose: row.purpose, status: 'ready', evidenceType: row.evidenceType, sha256: row.sha256, image: row.image })
+        images.push({ type: 'text', text: '图像证据 ' + row.id + '：' + row.path + '；证据类型：' + row.evidenceType + '；检查用途：' + row.purpose }, { type: 'image', attachment })
         evidenceIds.add(row.id); resultIds.add(row.id)
       }
     } catch (error) {
       if (signal?.aborted) throw error
       fail(reasonOf(error))
     }
+  }
+  // Water-fill capped selections before sending; short files release their unused share.
+  let remaining = MATERIAL_TOTAL_CHARS
+  let active = pending.filter(item => item.selected.length > 0)
+  while (active.length && remaining > 0) {
+    const share = Math.max(1, Math.floor(remaining / active.length))
+    for (const item of active) {
+      const extra = Math.min(share, remaining, MATERIAL_TEXT_CHARS - item.budget, item.selected.length - item.budget)
+      item.budget += extra
+      remaining -= extra
+    }
+    active = active.filter(item => item.budget < Math.min(MATERIAL_TEXT_CHARS, item.selected.length))
+  }
+  for (const { row, selected, entry, budget } of pending) {
+    if (signal?.aborted) throw signal.reason || new Error('cancelled')
+    const body = selected.slice(0, budget)
+    row.selectionComplete = body.length === selected.length
+    row.wholeFileComplete = row.selectionComplete && row.selectedStartLine === 1 && row.selectedEndLine === row.totalLines
+    row.status = row.selectionComplete ? 'ready' : 'truncated'
+    row.truncated = !row.selectionComplete; row.sent = true
+    row.sentChars = body.length; row.excerpt = body.slice(0, 2400)
+    Object.assign(entry, { status: row.status, chars: row.chars, sentChars: row.sentChars, sha256: row.sha256,
+      selectionScope: row.selectionScope, selectionComplete: row.selectionComplete, wholeFileComplete: row.wholeFileComplete,
+      totalLines: row.totalLines, selectedStartLine: row.selectedStartLine, selectedEndLine: row.selectedEndLine,
+      selectedChars: row.selectedChars, text: body })
+    evidenceIds.add(row.id); resultIds.add(row.id)
+    limited ||= !row.wholeFileComplete
   }
   return { materials, evidence, images, evidenceIds, resultIds, limited }
 }

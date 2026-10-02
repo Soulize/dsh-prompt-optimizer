@@ -373,7 +373,29 @@ export function writeSettings({ path, patch, now = Date.now() } = {}) {
   }
   if (gateFrom.settingsVersion === undefined) gateFrom.settingsVersion = 1     // 0.6 自己的配置标记（值同 migration 的 NEW_SETTINGS_VERSION）
   const merged = mergeSettings(before, patch)
-  const after = { ...gateFrom, ...before, ...merged.settings }
+  // ── issue #16：**档位就是启用开关** ──────────────────────────────────────
+  // README 写的是"装完之后在面板上拨档位（关闭/轻度/标准/重度就是启用开关）"，但实现里
+  // `enabled`/`rollout` 只被**原样搬运**（见上面的 gateFrom）⇒ 全包**没有任何代码路径**会写
+  // `enabled: true` ⇒ 全新安装的用户无论怎么拨档位，闸门一律 `gate:rollout-off`，
+  // 界面报「失败：gate:rollout-off」。报告者已用同一实例手工写字段反证"闸门本身是好的"。
+  // 两条边界按"别越权"设计：
+  //   ① 灰度名单（rollout.mode === 'allowlist'）**只补 enabled，不动名单**；
+  //   ② 改模型/权限/上下文/内置 Bash 的写入**不碰**启用意图（否则"我改个模型它自己开了"）。
+  const LEVEL_KEYS = ['tier', 'assist', 'detail', 'budget']
+  const gatePatch = {}
+  if (isPlainObject(patch) && LEVEL_KEYS.some((k) => patch[k] !== undefined)) {
+    if (tierOf(merged.settings) === 'off') {
+      gatePatch.enabled = false
+      // 显式关闭 ⇒ 理由码必须是"用户的选择"，不是回落来的 off（用户要能区分这两者）
+      gatePatch.rollout = { mode: 'off' }
+    } else {
+      gatePatch.enabled = true
+      const cur = gateFrom.rollout !== undefined ? gateFrom.rollout : before.rollout
+      if (!(isPlainObject(cur) && cur.mode === 'allowlist')) gatePatch.rollout = { mode: 'all' }
+    }
+  }
+  // gatePatch **最后**展开：档位写入的启用意图要盖过搬运来的旧值。
+  const after = { ...gateFrom, ...before, ...merged.settings, ...gatePatch }
   const out = {
     ok: false, before, after, backup: null, problems: merged.problems, path,
     recoveredFromCorrupt: corruptBefore,

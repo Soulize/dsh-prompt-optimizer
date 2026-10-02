@@ -2,6 +2,28 @@
 
 本项目版本号遵循 `0.x` 阶段的语义化：`0.<minor>.<patch>`；预发布版本带 `-beta.N` 后缀（面板中显示为 `0.3.0beta1`）。
 
+## v0.8.1-stable — 2026/10/03（装配修复版）
+
+### 修复（针对「在 DSH 0.2 上装上了却用不了」的反馈）
+
+- **根因：发布产物里的身份标识与包名不一致。** `0.8.0-preview` 的 tgz 中 `package.json` 已是 `@dsh-external/dsh-arbiter-wf`，但 `lib/client.js` 的注册 id、`lib/index.js` 的 `export const name` 与 `PRODUCER_KIND` 仍是旧名 `@dsh-external/dsh-po06`。宿主按包名生成 boot row id 并**只在该 id 下找注册** ⇒ 报 `loaded without registering "@dsh-external/dsh-arbiter-wf"`，**client 半侧整个不激活**（面板、卡片、设置页都不出现）。三处标识连同 `cordis.patch.yml` 的 entry 名一并改正。
+  - 这与 DSH 版本**无关**：同一份产物在 0.1.7 上同样注册不上。0.7.8 及更早的产物名字一致，所以只有装了 `0.8.0-preview` 的用户会中招。
+  - 新增 `po06/test/identity.test.mjs`：包名、client 注册 id、`export const name`、`PRODUCER_KIND`、patch entry 名**从 `package.json` 动态取真值**再比对——写死字面量会在下次改名时静默通过。
+- **#22 `readTools` 恒报 `no-packet`**：判定是否工具包只用了 `/"ops":/` 子串匹配，混着散文的 JSON 直接漏判。改用流水线同一个 `extractJson`。
+- **#17 每次 bash 调用都刷 `/tmp` 警告**：内置 MSYS 运行时缺 `/tmp` 时 `bash.exe` 会打印 `could not find /tmp, please create!`。改为**注册期**与**每次执行入口**都确保存在（执行入口早于运行时探测，避免探测阶段就先刷一遍警告）。
+- **#16 面板里把档位从 off 调回可用时插件仍是关的**：`writeSettings` 只透传 `enabled`/`rollout`，没有任何代码路径把 `enabled` 写回 true。改为按档位联动门禁（`tier=off` ⇒ 关闭门禁与 rollout；档位可用 ⇒ 重新启用，已处于白名单模式时不覆盖）。
+- **#19 切换会话后悬浮球与拦截面板状态不同步**：两处各持一份 `hold` 状态，只有一个组件能收到事件。改为模块级 hold 桥（写状态 + 派发事件，订阅方采纳），并保证卸载时不再 abort 正在进行的回合。
+- **#18 浮层被右侧预览栏压住**：改为**排布**方案——量输入卡片得到「会话窗」边界，浮层整块收在窗内（右缘不越过会话窗右缘），会话列变窄时浮层跟着变窄。右侧栏若是不压缩会话列的**固定浮层**，另有一条保守探测取它的左缘当边界。重算由共享观察器驱动：窗口缩放 + 输入卡片尺寸 + `body` 子节点与 `class/style/subtree` 属性变化（侧栏靠 class 显隐时也生效）。拦截浮层、悬浮球、优化选项弹层、帮助弹层、设置面板五处统一走这套边界。
+
+### 新能力
+
+- **拦截面板产出层流式显示**：优化进行中就把产出层的中间结果实时画出来，标注「正在生成 · 尚未校验」，只读；校验完成后才切成可编辑的最终报文。此前整块 UI 在生成期间是静止的，成品突然出现。
+
+### 兼容性（同一份产物同时适配 0.1.7 与 0.2.0-rc.2）
+
+- 对 0.2.0-rc.2 的实际产物做了逐成员契约对照：模块加载契约、`dsh.client` 清单、四个插槽、工具与卡片注册、`clientModules`/`systemPrompt`/`sessionProjections`/`webServer`/`agents`/`llm`/`attachments`/`commands` 全部一致；19 个接触包中 14 个的类型声明与 0.1.7 **逐字节相同**，另外 5 个的差异全是**追加或可选参数**，不触本插件调用点。
+- 未验证项如实保留：0.2 的插件装配路径是否仍接受本包的 patch + junction 形态、桌面端是否复用 `platform:"web"` 客户端、`session` 中「中断工具调用修复」带来的运行时行为差异。详见 `docs/DSH-0.2-COMPAT.md`。
+
 ## v0.8.0-preview — 2026/10/01（改名首版，未发布 npm）
 
 ### 更名与定位

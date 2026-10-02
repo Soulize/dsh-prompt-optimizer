@@ -267,7 +267,7 @@ function readTextSafe(path) {
  *                         宿主就不知道政策变了。返回值原样带回给界面（诊断用）。
  * @param opts.now         注入时钟（测试用）
  */
-export function createControlHandler({ home, stateDir, ledgerPath, version = null, resolveEfforts = null, sessionModel = null, listModels = async () => ({ models: [], problems: [] }), listTools = null, toolState = null, now = () => Date.now(), help = {}, interpret = null, setPacket = null, progress = null, advisorProgress = null, rollbackPacket = null, getPacket = null, onSettingsWritten = null, gateSummary = null, registeredCommands = null } = {}) {
+export function createControlHandler({ home, stateDir, ledgerPath, version = null, resolveEfforts = null, sessionModel = null, listModels = async () => ({ models: [], problems: [] }), listTools = null, toolState = null, now = () => Date.now(), help = {}, interpret = null, setPacket = null, progress = null, advisorProgress = null, rollbackPacket = null, getPacket = null, onSettingsWritten = null, gateSummary = null, registeredCommands = null, advisorStageStatus = null } = {}) {
   const H = String(home)
   const cfgPath = join(H, 'po06.json')
   const ledger = ledgerPath || join(H, 'po06-wire.jsonl')
@@ -377,6 +377,7 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         const prompt = resolvePrompt({ home: H })
         return send(200, {
           ok: true, version, home: H,
+          advisorCollaboration: typeof advisorStageStatus==='function' ? (()=>{try{return advisorStageStatus(qsid || null)}catch{return {ok:false,reason:'stage-status-unavailable'}}})() : null,
           enabled: intent.settings.enabled === true,
           rollout: intent.rollout.mode,
           // 诊断：`rollout` 是**回落来的 off**（配置里没写/写错）还是**用户显式写的 off**——

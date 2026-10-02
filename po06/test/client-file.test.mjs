@@ -719,6 +719,19 @@ t('功能：缺 slots 服务时不抛、不注册（而不是让整页崩掉）'
   eq(calls.length, 0, '不该注册任何东西')
 })
 
+t('review outcome card separates invocation success and pending acceptance with evidence provenance',()=>{
+ const react={createElement:(type,props,...children)=>({type,props,children}),Fragment:'Fragment',useState:v=>[v,()=>{}],useRef:v=>({current:v}),useEffect:()=>{},useCallback:f=>f,useMemo:f=>f()}
+ const {mod}=loadClientModule(undefined,react)
+ const text=n=>typeof n==='string'?n:!n||typeof n!=='object'?'':(n.children||[]).flat(Infinity).map(text).join(' ')
+ const value={ok:true,invocationSucceeded:true,reviewPassed:false,reviewState:{openIssues:[{id:'R1',criterion:'actual runtime',nextStep:'capture evidence'}]},report:{verdict:'gaps',summary:'pending',checks:[],findings:[],nextStep:'next',stopCondition:'stop'},inspectedMaterials:[{path:'app.js',status:'read',offset:20,limit:10}]}
+ const tree=mod.__debug.AdvisorToolRow({phase:'result',sessionId:'s',callId:'c',block:{content:[{type:'text',text:JSON.stringify(value)}]}})
+ ok(text(tree).includes('咨询调用：成功') && text(tree).includes('验收待补'),'调用成功不冒充通过')
+ ok(text(tree).includes('R1') && text(tree).includes('capture evidence'),'缺口与动作可见')
+ ok(text(tree).includes('顾问补读') && text(tree).includes('offset=20'),'补读范围单列')
+ const mats=mod.__debug.AdvisorMaterials({materials:[{path:'app.js',kind:'file',status:'ready',evidenceType:'source',selectionScope:'line-range',selectedStartLine:2,selectedEndLine:4,wholeFileComplete:false},{path:'preview.png',kind:'image',status:'ready',evidenceType:'software-preview'}]})
+ ok(text(mats).includes('2-4') && text(mats).includes('非全文') && text(mats).includes('替代预览'),'片段与替代图可分辨')
+})
+
 const total = pass + failures.length
 console.log(JSON.stringify({
   suite: 'po06-client-file', phase: 'P9', total, pass, fail: failures.length, failures,

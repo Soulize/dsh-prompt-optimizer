@@ -8,7 +8,7 @@
 import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { dirname, delimiter } from 'node:path'
+import { dirname, delimiter, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { renderBashOutput } from './bash-output.mjs'
 import { beginInvocation, endInvocation, usageNote } from './bash-diagnostics.mjs'
@@ -45,6 +45,31 @@ export function normalizeBashConfig(c) {
 const load = (file) => import(new URL('./' + file, import.meta.url).href)
 
 /**
+ * issue #17：MSYS 的 /tmp 没有任何人负责创建（仓库里它是空目录 ⇒ 进不了 git、也进不了包，
+ * provision 也不建它），于是**非作者机器上每次调用**都往 stderr 打：
+ *   bash.exe: warning: could not find /tmp, please create!
+ * 这不只是噪音：任何断言 stderr 为空的测试/工具都会被弄红（报告者实测 8 个测试全红）。
+ *
+ * ⚠ 必须建在**任何一次 bash 启动之前**——运行时候选探测（probeRuntime）本身就会 spawn bash，
+ *   放在 spawn 前一步是不够的（实测：探测那次仍然把警告打了出来）。
+ * 只作用于**自带运行时根**，不去写别人的 Git/MSYS 安装目录。best effort：建不出来不阻断命令。
+ * 完整性校验只核清单内文件是否存在/哈希相符，不会因为多出 tmp/ 而失败（runtime-layout.verifyRuntime）。
+ */
+export function ensureMsysTmp(runtimeRoot) {
+  try {
+    if (!runtimeRoot) return false
+    mkdirSync(resolve(runtimeRoot, 'tmp'), { recursive: true })
+    return true
+  } catch { return false }
+}
+
+/** 自带运行时的默认位置（`<plugin>/runtime`）。 */
+function defaultBundledRuntimeDir() {
+  return fileURLToPath(new URL('../../runtime', import.meta.url))
+}
+
+
+/**
  * 把调用方给的 timeoutMs 收进 [1, max]；非法值回落缺省。**纯函数**。
  * 这是**安全网**，不是决策者：真实上限已写进工具描述，模型可据此自行判断该用多少。
  */
@@ -64,6 +89,8 @@ export { costNote, splitStages, chainFinding, heavyFindings, usageNote } from '.
 
 export function apply(ctx, config, dependencies = {}) {
   config = normalizeBashConfig(config)
+  // issue #17：注册期就先补一次（此后任何探测/调用都不该再为 /tmp 报警告）。
+  ensureMsysTmp(resolve(config.bundledRuntimeDir || defaultBundledRuntimeDir()))
   ctx.effect(() => ctx.tools.register({
     name: 'bash',
     description: '执行 bash 命令（GNU bash / MSYS2，不是 PowerShell 也不是 cmd）；命令内用 POSIX 路径（盘符写作 /d/...），workdir 用宿主路径（D:/...）；需原样传参用 args 数组（成为 $1…$n，$0=dsh-bash）；非零退出不会自动重试或换后端。'
@@ -111,6 +138,8 @@ export function apply(ctx, config, dependencies = {}) {
       const started = performance.now()
       const signal = exec?.signal
       const cancelled = () => signal?.aborted === true
+      // issue #17：**在加载模块与探测之前**补 tmp——探测本身会 spawn bash，晚一步就会漏出警告。
+      ensureMsysTmp(resolve(config.bundledRuntimeDir || defaultBundledRuntimeDir()))
       if (cancelled()) return '调用已取消，命令未执行。'
       let gov, jobport, wsmod, provision
       try {

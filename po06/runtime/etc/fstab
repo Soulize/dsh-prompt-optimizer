@@ -1,0 +1,3 @@
+# MSYS2 mount table (plugin-bundled runtime)
+none /cygdrive cygdrive binary,posix=0,noacl,user 0 0
+C:/ /c ntfs binary,posix=0,noacl,user 0 0

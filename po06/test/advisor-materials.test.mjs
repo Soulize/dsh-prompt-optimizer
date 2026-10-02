@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareAdvisorMaterials, validateMaterialInput, MATERIAL_TEXT_CHARS } from '../lib/advisor-materials.js'
+import { createHash } from 'node:crypto'
 import { createAdvisor, ADVISOR_PARAMETERS } from '../lib/advisor.js'
 
 const root = mkdtempSync(join(tmpdir(), 'po06-materials-'))
@@ -115,6 +116,139 @@ test('附件服务拒绝假图时只显示不可用，不发送任何图片', as
   assert.equal(out.images.length,0)
   assert.equal(out.materials[0].sent,false)
   assert.equal(out.materials[0].reason,'IMAGE_INVALID')
+})
+
+test('four large files receive equal nonzero budgets, repeatably', async () => {
+  const files = ['a', 'b', 'c', 'd'].map(letter => {
+    const path = 'large-' + letter + '.txt'
+    writeFileSync(join(root, path), letter.repeat(20000))
+    return desc(path)
+  })
+  const first = await prepare({ files })
+  const second = await prepare({ files })
+  assert.deepEqual(first, second)
+  assert.deepEqual(first.materials.map(row => row.sentChars), [12000, 12000, 12000, 12000])
+  assert.equal(first.evidence.reduce((sum, entry) => sum + entry.text.length, 0), 48000)
+  for (const [i, row] of first.materials.entries()) {
+    assert.equal(row.status, 'truncated')
+    assert.equal(row.selectionScope, 'whole-file')
+    assert.equal(row.selectionComplete, false)
+    assert.equal(row.wholeFileComplete, false)
+    assert.equal(row.sent, true)
+    assert.equal(first.evidence[i].text, ['a', 'b', 'c', 'd'][i].repeat(12000))
+    assert.ok(first.evidenceIds.has(row.id))
+    assert.ok(first.resultIds.has(row.id))
+  }
+  const mixed = await prepare({ files: [desc('out.html'), ...files.slice(1)] })
+  assert.deepEqual(mixed.materials.slice(1).map(row => row.sentChars), [15992, 15991, 15991])
+  const unavailable = await prepare({ files: [desc('missing.txt'), ...files.slice(1)] })
+  assert.deepEqual(unavailable.materials.slice(1).map(row => row.sentChars), [16000, 16000, 16000])
+})
+
+test('inclusive line ranges preserve endings and distinguish complete selection from whole file', async () => {
+  const text = 'first\r\nsecond\nthird\rfourth\n'
+  writeFileSync(join(root, 'lines.txt'), text)
+  const cases = [
+    [{ startLine: 2, endLine: 3 }, 'second\nthird\r', false],
+    [{ startLine: 3 }, 'third\rfourth\n', false],
+    [{ endLine: 2 }, 'first\r\nsecond\n', false],
+    [{ startLine: 1, endLine: 4 }, text, true],
+  ]
+  for (const [range, selected, complete] of cases) {
+    const out = await prepare({ files: [{ ...desc('lines.txt'), ...range, evidenceType: 'source' }] })
+    const row = out.materials[0], entry = out.evidence[0]
+    assert.equal(entry.text, selected)
+    assert.equal(row.status, 'ready')
+    assert.equal(row.selectionScope, 'line-range')
+    assert.equal(row.selectionComplete, true)
+    assert.equal(row.wholeFileComplete, complete)
+    assert.equal(row.truncated, false)
+    assert.equal(out.limited, !complete)
+    assert.equal(row.totalLines, 4)
+    assert.equal(row.chars, text.length)
+    assert.equal(row.selectedChars, selected.length)
+    assert.equal(row.sha256, createHash('sha256').update(text).digest('hex'))
+    for (const key of ['evidenceType', 'selectionScope', 'selectionComplete', 'wholeFileComplete', 'totalLines', 'selectedStartLine', 'selectedEndLine', 'selectedChars', 'sha256']) {
+      assert.equal(entry[key], row[key])
+    }
+  }
+  const whole = await prepare({ files: [desc('lines.txt')] })
+  assert.equal(whole.evidence[0].text, text)
+  assert.equal(whole.materials[0].selectionScope, 'whole-file')
+  assert.equal(whole.materials[0].wholeFileComplete, true)
+  assert.equal(whole.limited, false)
+  const clipped = await prepare({ files: [{ ...desc('long.txt'), startLine: 1, endLine: 1 }] })
+  assert.equal(clipped.materials[0].selectionScope, 'line-range')
+  assert.equal(clipped.materials[0].selectionComplete, false)
+  assert.equal(clipped.materials[0].wholeFileComplete, false)
+  writeFileSync(join(root, 'empty.txt'), '')
+  const empty = await prepare({ files: [{ ...desc('empty.txt'), startLine: 1, endLine: 1 }] })
+  assert.equal(empty.evidence[0].text, '')
+  assert.equal(empty.materials[0].wholeFileComplete, true)
+})
+
+test('invalid and out-of-bounds ranges never silently read a whole file', async () => {
+  const invalid = [
+    { startLine: 0 }, { endLine: -1 }, { startLine: 1.5 }, { endLine: '2' },
+    { startLine: null }, { endLine: NaN }, { startLine: Infinity },
+    { endLine: Number.MAX_SAFE_INTEGER + 1 }, { startLine: true }, { startLine: 3, endLine: 2 },
+  ]
+  for (const range of invalid) {
+    const files = [{ ...desc('lines.txt'), ...range }]
+    assert.equal(validateMaterialInput({ files }), 'invalid-artifacts')
+    const out = await prepare({ files })
+    assert.equal(out.materials[0].reason, 'invalid-line-range')
+    assert.equal(out.materials[0].sent, false)
+    assert.equal(out.evidence[0].text, undefined)
+    assert.equal(out.resultIds.size, 0)
+  }
+  for (const range of [{ startLine: 5 }, { endLine: 5 }, { startLine: 4, endLine: 5 }]) {
+    const files = [{ ...desc('lines.txt'), ...range }]
+    assert.equal(validateMaterialInput({ files }), null)
+    const out = await prepare({ files })
+    assert.equal(out.materials[0].reason, 'line-range-out-of-bounds')
+    assert.equal(out.materials[0].sent, false)
+    assert.equal(out.materials[0].selectionComplete, false)
+    assert.equal(out.materials[0].wholeFileComplete, false)
+    assert.equal(out.evidence[0].text, undefined)
+    assert.equal(out.resultIds.size, 0)
+    assert.equal(out.limited, true)
+  }
+})
+
+test('evidence types are validated, defaulted, and propagated for files and images', async () => {
+  for (const evidenceType of ['source', 'test-log', 'runtime-log', 'other', undefined]) {
+    const args = { files: [{ ...desc('out.html'), evidenceType }] }
+    assert.equal(validateMaterialInput(args), null)
+    const out = await prepare(args)
+    assert.equal(out.materials[0].evidenceType, evidenceType ?? 'other')
+    assert.equal(out.evidence[0].evidenceType, evidenceType ?? 'other')
+  }
+  for (const evidenceType of ['runtime-capture', 'software-preview', 'reference', 'other', undefined]) {
+    const args = { images: [{ ...desc('shot.png'), evidenceType }] }
+    assert.equal(validateMaterialInput(args), null)
+    const out = await prepareAdvisorMaterials({ root, enabled: true, imageSupport: true, args,
+      attachments: { saveImage: async () => ({ attachmentId: 'typed', mediaType: 'image/png', bytes: image.length, width: 1, height: 1 }) } })
+    assert.equal(out.materials[0].evidenceType, evidenceType ?? 'other')
+    assert.equal(out.evidence[0].evidenceType, evidenceType ?? 'other')
+    assert.ok(out.images[0].text.includes(evidenceType ?? 'other'))
+    assert.equal(out.evidence[0].sha256, out.materials[0].sha256)
+  }
+  for (const evidenceType of ['runtime-capture', '', null, 1]) {
+    const args = { files: [{ ...desc('out.html'), evidenceType }] }
+    assert.equal(validateMaterialInput(args), 'invalid-artifacts')
+  }
+  for (const evidenceType of ['source', '', null, 1]) {
+    assert.equal(validateMaterialInput({ images: [{ ...desc('shot.png'), evidenceType }] }), 'invalid-images')
+  }
+  const legacy = await prepare({ artifacts: ['out.html'] })
+  assert.equal(legacy.materials[0].evidenceType, 'other')
+  assert.equal(legacy.materials[0].wholeFileComplete, true)
+  const missing = await prepare({ files: [{ ...desc('missing.txt'), evidenceType: 'test-log' }] })
+  assert.equal(missing.evidence[0].evidenceType, 'test-log')
+  const unsupported = await prepare({ images: [{ ...desc('shot.png'), evidenceType: 'reference' }] })
+  assert.equal(unsupported.evidence[0].evidenceType, 'reference')
+  assert.equal(unsupported.materials[0].status, 'not-inspected')
 })
 
 test('文件被附入的快照与当前预览路径分开，材料有内容指纹', async () => {

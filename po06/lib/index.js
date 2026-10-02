@@ -32,7 +32,7 @@ import { recordUserInput } from './reducer.js'
 import { playbookItems } from './playbook.js'
 import { createState } from './schema.js'
 import { handleUserInput } from './pipeline.js'
-import { SYSTEM_PROMPT, buildUserMessage, HARD_NOTE_SYSTEM } from './interpreter.js'
+import { SYSTEM_PROMPT, buildUserMessage, HARD_NOTE_SYSTEM, extractJson } from './interpreter.js'
 import { TOOLS_SYSTEM_NOTE } from './read-tools.js'
 import { drain } from './eval-llm.js'
 import { createStateStore, inheritStateForFork } from './store.js'
@@ -49,7 +49,10 @@ import { runReadOnlyToolLoop } from './read-tools.js'
 import { createAdvisor, registerAdvisorTool, resolveAdvisorTimeoutMs } from './advisor.js'
 import { createAdvisorProgress } from './advisor-progress.js'
 import { withAdvisorWorkflow } from './advisor-workflow.js'
+import { createAdvisorFeedback } from './advisor-context.js'
 import { createAdvisorCoverage } from './advisor-coverage.js'
+import { createAdvisorStages } from './advisor-stages.js'
+import { registerAdvisorStageTool } from './advisor-stage-tool.js'
 import { strategyInstructions } from './strategy.js'
 // 0.7.1：内置 Bash —— 原独立插件 dsh-bash-runtime 的实现已并入本包 `lib/bash/`，
 // 运行时随包分发在 `<plugin>/runtime/`。装配即提供；详情里的开关决定是否注册给模型。
@@ -782,7 +785,14 @@ export async function interpretViaLlm({ llm, cfg, userPrompt, system, systemNoTo
     // 机制：工具循环跑完，模型往往给的是**查证后的散文**（"我看过 xxx 文件……"），
     // 而 pipeline 需要的是**那一个 JSON**（`{"ops":[…]}`）⇒ 解析不出补丁 ⇒ `noop` ⇒ `no-packet`。
     // 所以这里收紧接受条件：**只有看起来真是那份 JSON 才认工具路径的产出**，否则一律回落无工具单次调用。
-    const looksLikeJson = /"ops"\s*:/.test(String(loop.text || ''))
+    // issue #22 修复：原先只查 ops 子串，于是「合法 JSON + 中间散文 + JSON 尾巴」的混合体
+    //   被判为通过 ⇒ 接受工具路径产出 ⇒ **跳过紧随其后的 no-tools-retry 回落** ⇒ pipeline 取首个 { 到
+    //   末个 } 去 parse、撞上中间散文 ⇒ BAD_JSON ⇒ 空包 ⇒ 界面「失败：no-packet」。
+    //   这与本段的设计意图（工具路径是增强，绝不该有能力把整轮弄死）正好相反。
+    //   现在改用**与 pipeline 同一个抽取器**（interpreter.js 的 extractJson：容忍围栏与前后废话，
+    //   取首 { 到末 } 再 JSON.parse）：只有**真能 parse 成对象**才认，否则照旧回落重跑一次。
+    const toolJson = extractJson(loop.text)
+    const looksLikeJson = toolJson.ok === true && toolJson.value !== null && typeof toolJson.value === 'object'
     if (loop.ok && !loop.empty && looksLikeJson) {
       return { text: loop.text, ms: Date.now() - t0, via: 'tools', context: {
         toolRounds: loop.rounds, toolCalls: loop.toolCalls, toolNames: loop.names,
@@ -797,7 +807,7 @@ export async function interpretViaLlm({ llm, cfg, userPrompt, system, systemNoTo
       toolRounds: loop.rounds, toolCalls: loop.toolCalls, toolNames: loop.names,
       toolCapped: loop.capped === true, toolTrace: loop.trace, toolMs: loop.ms,
       toolRoot: loop.root, toolsEnabled: true, toolsReason: tools.reason || 'enabled',
-      toolLoopError: String(loop.error || (loop.empty ? 'empty-output' : (looksLikeJson ? 'unknown' : 'tools-answer-not-json'))),
+      toolLoopError: String(loop.error || (loop.empty ? 'empty-output' : (looksLikeJson ? 'unknown' : (toolJson.code === 'BAD_JSON' ? 'tools-answer-bad-json' : 'tools-answer-not-json')))),
       toolFallback: 'no-tools-retry',
     }
     const r2 = await plainDrain(() => llm.stream(withSignal({
@@ -1663,7 +1673,8 @@ class DshAdapter {
             text: (assemblyCtx) => {
               try {
                 const agent = assemblyCtx && assemblyCtx.agent
-                const sid = agent && agent.id !== undefined ? String(agent.id) : ''
+                const session = agent && (agent.session || (typeof agent.getSession === 'function' ? agent.getSession() : null))
+                const sid = session?.id !== undefined ? String(session.id) : agent && agent.id !== undefined ? String(agent.id) : ''
                 if (!sid) return ''
                 // ── 启用闸门（A10/A12）──────────────────────────────
                 // 灰度 + 设置 + 双重拦截守卫**在这里**生效，而不是只在自检里生效。
@@ -1680,7 +1691,8 @@ class DshAdapter {
                 if (pol && pol.injectPacket !== true) return ''
                 // Tool presence alone did not cause a review in the tank test. Keep the working
                 // workflow available even when the interpreter has no new intent items.
-                return withAdvisorWorkflow(this.intentBySession.get(sid) || '', pol)
+                const feedback = this.reviewFeedback ? this.reviewFeedback(agent, pol) : ''
+                return withAdvisorWorkflow(this.intentBySession.get(sid) || '', pol, feedback)
               } catch (e) {
                 // ⚠ **不得静默**（EV-0102）：这条路径若抛错，意图包会在**毫无痕迹**的情况下消失——
                 // 正是 EV-0078 那一类事故（产品安静地不做事，用户以为它开着）。
@@ -1815,6 +1827,9 @@ export function apply(ctx, config) {
   pluginConfig = config && typeof config === 'object' ? config : {}
   const advisorProgress = createAdvisorProgress({ home: DSH_HOME })
   const advisorCoverage = createAdvisorCoverage({ home: DSH_HOME })
+  const advisorStages = createAdvisorStages({ home: DSH_HOME })
+  adapter.reviewFeedback = createAdvisorFeedback({stages:advisorStages,coverage:advisorCoverage})
+  ctx.effect(() => () => { adapter.reviewFeedback = null })
   ctx.effect(() => () => advisorProgress.dispose(), 'dsh-po06: advisor progress')
   // 斜杠命令表：只有拿到它，才能确认名单里的命令**当前真的存在**（见 control-api 的 slashReview）。
   // 拿不到就 fail-closed（不拦截）——与改动前行为一致，不会因为我们报错。
@@ -1837,7 +1852,7 @@ export function apply(ctx, config) {
   // Independent advisor: fresh invocation, existing optimizer route, read-only capabilities.
   ctx.inject(['tools', 'llm'], (scope) => {
     const execute = createAdvisor({
-      log: appendWireLog, progress: advisorProgress, coverage: advisorCoverage,
+      log: appendWireLog, progress: advisorProgress, coverage: advisorCoverage, stages: advisorStages,
       // 限时走同一个解析口：默认 5 分钟，环境变量可调（钳制在 60s~15min）。
       timeoutMs: resolveAdvisorTimeoutMs(process.env),
       resolveRuntime: async (session, signal) => {
@@ -1862,7 +1877,15 @@ export function apply(ctx, config) {
     })
     scope.effect(() => {
       const dispose = registerAdvisorTool(scope, execute)
-      return () => { execute.dispose(); if (typeof dispose === 'function') dispose() }
+      const stageDispose = registerAdvisorStageTool(scope, advisorStages, {
+        resolveAccess: async session => {
+          const sid=String(session.id); const pol=readPolicy({home:DSH_HOME,sessionId:sid})
+          if(!pol.injectPacket)return {ok:false,reason:'assist-off'}
+          const gate=await awaitGateDecision(sid); if(gate?.enabled!==true)return {ok:false,reason:'advisor-gate-disabled'}
+          return {ok:true,readTools:pol.readTools===true}
+        },
+      })
+      return () => { execute.dispose(); if (typeof dispose === 'function') dispose(); if(typeof stageDispose==='function') stageDispose() }
     }, 'dsh-po06: independent advisor tool')
   })
   const report = {
@@ -1984,6 +2007,11 @@ export function apply(ctx, config) {
           // P11：拦截进度面（"优化中"那几十秒要看得见它在想什么）
           progress: (sid) => progressGet(sid),
           advisorProgress: (sid, identity) => advisorProgress.get(sid, identity),
+          advisorStageStatus: sid => {
+            const pol=sid ? readPolicy({home:DSH_HOME,sessionId:sid}) : null
+            const stage=sid ? advisorStages.status({sessionId:String(sid),readEnabled:false}) : null
+            return {ok:true,protocolVersion:2,enabled:pol?.injectPacket===true,stage,verification:'diagnostic-only-no-file-reread'}
+          },
           // P11：读回"这一轮注入的包"（回退后把新正文读回界面）
           getPacket: (p) => adapter.getIntentText(p && p.sessionId),
           // P11：包级回退（宿主侧保存了每会话最近 10 版非空包）
