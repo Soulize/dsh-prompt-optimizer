@@ -17,6 +17,27 @@
 | 测试 | 71 套 / 209 项全绿（`node --test po06/test/*.test.mjs`；bash 与 pwsh 两种 shell） |
 | 本机装配 | `profiles/web` 依赖键与 `bundles` 改用新名，junction 重建为 `@dsh-external/dsh-arbiter-wf`；profile 内无旧名残留（备份除外） |
 | 未验证项 | 真实 Win32 Job 行为、脱离父链的 MSYS 子孙清空、真实模型识图效果；**无性能跑分结论** |
+## 0.8.1-stable 发布登记（2026-10-03 · 装配修复版）
+
+| 项 | 值 |
+|---|---|
+| 包名 | `@dsh-external/dsh-arbiter-wf` |
+| 版本 | `0.8.1-stable` |
+| tag / commit | `v0.8.1-stable` / `29382abde6165be38c628eb1c48d20c0571cbf8d
+
+[调用耗时 0.10s；准备 0.00s；执行与收尾 0.10s]
+[exit code: 0]` |
+| 附件 | `dsh-external-dsh-arbiter-wf-0.8.1-stable.tgz`（21,298,759 B）、`SHA256SUMS-0.8.1-stable.txt`（111 B） |
+| tgz sha256 | `b33f8031dfb576d51f9f63c03615250d12a0bc4bc3cfa55b5851dca43d303887` |
+| 产物核对 | 解开 tgz 逐处核对**身份五处一致**：`package.json` name = `client.js` 注册 id = `index.js` 的 `export const name` = `PRODUCER_KIND` = `cordis.patch.yml` 条目名 = `@dsh-external/dsh-arbiter-wf`（上一版正是这里漏出去） |
+| 产物核对（脚本） | `po06/scripts/verify-artifact.mjs --tag v0.8.1-stable --tgz <tgz>` → **PASS**：230 个成员、49 个 lib 模块、版本四处一致 |
+| 内容核对 | 包内 `cordis.patch.yml` 与 `runtime/usr/bin/bash.exe`（2,553,064 B）均在；`lib` 内无作者本机绝对路径（唯一 `C:/Users/` 命中是注释里的示例 URL） |
+| 远程复核（无认证） | `releases/latest` → `v0.8.1-stable`、`prerelease=false`；附件非空；经 `releases/latest/download/...` 下载后 sha256 与本地**一致** |
+| 测试 | **294 项全绿**（`node --test po06/test/*.test.mjs`） |
+| 文档核对 | README/README.en.md 版本号与 Release 链接已更新；全仓 39 份文档的相对链接逐个核对，修掉英文 README 两条断链（`SPEC.md`→`docs/SPEC.md`、`README-0.5.en.md`→`old/0.5/README.en.md`） |
+| 未验证项 | **0.2 实机未验**（静态契约核对通过：19 个接触包中 14 个类型声明与 0.1.7 逐字节相同，另 5 个差异全为追加/可选参数；见 `docs/DSH-0.2-COMPAT.md`）。待验：0.2 的装配路径是否接受 patch + junction、桌面端是否复用 `platform:"web"` 客户端、`session` 中断修复的运行时行为差异。0.2 实机由用户在第二台机器上进行 |
+| 本机发布工具修正 | `~/.dsh/po06-beta/make-release.mjs` 两处写死旧包名（资产文件名与上传名），改名后会把资产发成 `dsh-external-dsh-po06-*`。已改为从 `po06/package.json` 的 name 派生；本次已用 REST 把错误命名的附件换成正确名字 |
+
 ## A. 工程硬门（可程序验证）
 
 | # | 条件 | 状态 | 证据 |
