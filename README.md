@@ -4,6 +4,7 @@
 
 效果展示:皆为Windows+DSH+PTC环境,OneShoot
 (其中插件档位为"重度")
+模型DeepSeek-V4-Flash
 ![](./docs/image/contrast_small.png)
 提示词:不要预览文件夹内的其他文件,制作一个单html程序,要求是极其精细的现代主战坦克模型,可以预览,操控,真实,帅气,炫技写真.
 
