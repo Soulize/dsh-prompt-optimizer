@@ -170,7 +170,7 @@ const WIRE_LOG_PATH = join(DSH_HOME, 'po06-wire.jsonl')
  * 本机 0.1.6 侧不受影响：v3 对用户消息的 kind 不设白名单（只要求非空字符串），
  * 而"绝不自我触发"那道闸是**正向白名单**（只认 `kind === 'user'`，见 `wire.js`），不依赖这个名字。
  */
-const PRODUCER_KIND = 'plugin:@dsh-external/dsh-po06'
+const PRODUCER_KIND = 'plugin:@dsh-external/dsh-arbiter-wf'
 
 /** 追加一条生产接线记录。**尽力而为**：台账写不进去也绝不打断会话。 */
 function appendWireLog(rec) {
@@ -1372,7 +1372,7 @@ async function decideEnableFor(agentId) {
   return { ...decision, probe }
 }
 
-export const name = '@dsh-external/dsh-po06'
+export const name = '@dsh-external/dsh-arbiter-wf'
 /** 版本号从**随包发行的 package.json** 读，不写死（写死就会漂——本项目栽过这类跟头）。 */
 const PKG_VERSION = (() => {
   try { return JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version } catch { return null }
@@ -1800,7 +1800,7 @@ export function apply(ctx, config) {
         if (!live) return
         try {
           const cm = scope.clientModules || scope.get('clientModules')
-          const name = '@dsh-external/dsh-po06'
+          const name = '@dsh-external/dsh-arbiter-wf'
           if (!cm?.pkgMeta || !cm?.dirty || typeof cm.flush !== 'function') return
           for (const key of cm.pkgMeta.keys()) {
             if (key === name || String(key).endsWith('\0' + name)) cm.pkgMeta.delete(key)

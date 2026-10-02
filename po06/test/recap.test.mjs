@@ -55,7 +55,7 @@ function run({ wire = [], states = {}, jsonOut = false, profiles = [], bareProfi
     for (const [name, body] of Object.entries(states)) writeFileSync(join(home, 'po06-state', name), body, 'utf8')
   }
   for (const p of profiles) {
-    mkdirSync(join(home, 'profiles', p, 'node_modules', '@dsh-external', 'dsh-po06'), { recursive: true })
+    mkdirSync(join(home, 'profiles', p, 'node_modules', '@dsh-external', 'dsh-arbiter-wf'), { recursive: true })
   }
   // 建了 profile 但**没装**这个包（真实情形：用户照 README 建了 profile，装包那步还没做/失败了）
   for (const p of bareProfiles) mkdirSync(join(home, 'profiles', p), { recursive: true })

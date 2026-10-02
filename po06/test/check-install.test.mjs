@@ -28,7 +28,7 @@ function t(name, fn) { try { fn(); pass += 1 } catch (e) { failures.push({ name,
 const DIRS = []
 process.on('exit', () => { for (const d of DIRS) { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } } })
 
-const PKG = '@dsh-external/dsh-po06'
+const PKG = '@dsh-external/dsh-arbiter-wf'
 /**
  * 造一个假 home + 假 profile + 假"装出来的包"。
  * @param {{noPkg?:boolean, noBundle?:boolean, version?:string, tamperLib?:boolean, enable?:boolean, noEnableFile?:boolean, oldPlugin?:boolean}} o

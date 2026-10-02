@@ -55,7 +55,7 @@ const pluginEvent = (text, id = 'm-plugin') => ({
   type: 'user/message',
   data: {
     id, role: 'user',
-    source: { kind: 'plugin', plugin: '@dsh-external/dsh-po06', form: 'snapshot' },
+    source: { kind: 'plugin', plugin: '@dsh-external/dsh-arbiter-wf', form: 'snapshot' },
     content: [{ type: 'text', text }],
   },
 })
@@ -929,11 +929,11 @@ t('ADR-0087：投递来源必须是生产者自报的 kind（0.1.7 的 v4 准入
     const code = s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     ok(!/kind:\s*'plugin'/.test(code),
       f + " 的代码里出现了 `kind: 'plugin'`：宿主 0.1.7 起会在写会话日志那一步抛 SessionFormatError")
-    ok(!/plugin:\s*'@dsh-external\/dsh-po06'/.test(code),
+    ok(!/plugin:\s*'@dsh-external\/dsh-arbiter-wf'/.test(code),
       f + ' 里还留着旧的 `plugin` 字段（新形态不需要它）')
   }
   const idx = readFileSync(join(HERE, '..', 'lib', 'index.js'), 'utf8')
-  ok(/const PRODUCER_KIND = 'plugin:@dsh-external\/dsh-po06'/.test(idx),
+  ok(/const PRODUCER_KIND = 'plugin:@dsh-external\/dsh-arbiter-wf'/.test(idx),
     '生产者 kind 必须显式定义（名字有依据：宿主迁移表的兜底命名）')
   ok(/kind: PRODUCER_KIND/.test(idx), '投递消息必须用 PRODUCER_KIND 构造')
   ok(/form: 'notice'/.test(idx), '`notice` 形态要保留（summary 上限 120 与宿主一致）')

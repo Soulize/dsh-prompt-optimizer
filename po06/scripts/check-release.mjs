@@ -35,7 +35,7 @@ const pkgPath = join(ROOT, 'package.json')
 if (!existsSync(pkgPath)) { problems.push('缺少 po06/package.json'); report() }
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
 
-if (pkg.name !== '@dsh-external/dsh-po06') {
+if (pkg.name !== '@dsh-external/dsh-arbiter-wf') {
   problems.push('包名与预期不符：' + String(pkg.name))
 }
 if (typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+/.test(pkg.version)) {

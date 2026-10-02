@@ -35,7 +35,7 @@ function whyNoWire(home) {
   let profiles = []
   try { profiles = readdirSync(join(home, 'profiles')) } catch { /* 没有 profiles/ 就是没装 */ }
   // 与 check-install 同一条判据：profile 的 node_modules 里有没有这个包
-  const installed = profiles.filter((p) => existsSync(join(home, 'profiles', p, 'node_modules', '@dsh-external', 'dsh-po06')))
+  const installed = profiles.filter((p) => existsSync(join(home, 'profiles', p, 'node_modules', '@dsh-external', 'dsh-arbiter-wf')))
   let enable = null
   try {
     const cfg = join(home, 'po06.json')
@@ -67,7 +67,7 @@ if (existsSync(WIRE)) {
   const where = installed.length > 0 ? '（profile：' + installed.join('、') + '）' : ''
   if (installed.length === 0) {
     notes.push('没有找到 `po06-wire.jsonl`，而且**这个 home 里没有装 0.6**'
-      + '（`profiles/*/node_modules` 下找不到 `@dsh-external/dsh-po06`）'
+      + '（`profiles/*/node_modules` 下找不到 `@dsh-external/dsh-arbiter-wf`）'
       + '——装法见 `po06/README.md`（装进一个**独立 profile**，别装进 0.5.x 那个）')
   } else if (enable && enable.ours && enable.settings && enable.settings.enabled) {
     notes.push('没有找到 `po06-wire.jsonl`：0.6 **装了、配置也是启用的**' + where

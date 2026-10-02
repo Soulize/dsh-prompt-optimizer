@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { decodeAllFrames, parseEvents, collectUsage } from './read-session.mjs'
 
 /** 本插件自己的包名（用于把"我们的投递"与宿主/别的插件的消息分开）。 */
-export const OWN_PLUGIN = '@dsh-external/dsh-po06'
+export const OWN_PLUGIN = '@dsh-external/dsh-arbiter-wf'
 /** 意图包注册的动态上下文名——**结构指纹**，比文案可靠（文案会改，注册名不会）。 */
 export const CONTEXT_NAME = 'prompt-optimizer:intent'
 

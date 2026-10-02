@@ -21,7 +21,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
 const KEEP = process.argv.includes('--keep')
 const DRILL = join(tmpdir(), 'po06-npm-drill')
-const PKG = '@dsh-external/dsh-po06'
+const PKG = '@dsh-external/dsh-arbiter-wf'
 
 const report = { probe: 'po06-npm-drill', phase: 'P8', at: new Date().toISOString(), steps: {}, ok: false }
 

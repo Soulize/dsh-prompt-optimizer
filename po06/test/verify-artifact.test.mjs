@@ -33,7 +33,7 @@ const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
  * 造一个**真 git 仓库**的迷你 po06 包（与真实 `files` 同形），打 tag。
  * @returns {repo, tag, version, name, tgzName, files}
  */
-function fixture({ version = '1.2.3', name = '@dsh-external/dsh-po06', tag = null } = {}) {
+function fixture({ version = '1.2.3', name = '@dsh-external/dsh-arbiter-wf', tag = null } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'po06-verify-'))
   DIRS.push(repo)
   const pkgDir = join(repo, 'po06')
