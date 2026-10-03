@@ -1838,6 +1838,10 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       // ⚠ `inputActions` 拿不到 ⇒ **绝不拦截**（拦下却没有放行通道 = 把用户的消息吞掉）。
       const { sessionId, inputActions } = props || {}
       const [status, refreshStatus] = useStatus(sessionId)
+      const [configScope, setConfigScope] = React.useState(() => sessionId ? 'session' : 'global')
+      React.useEffect(() => {
+        if (!sessionId && configScope !== 'global') setConfigScope('global')
+      }, [sessionId, configScope])
       const [open, setOpen] = React.useState(false)
       // 「优化选项」弹出面板（用户 2026-09-22：档位这些收进一个按钮里）
       const [optOpen, setOptOpen] = React.useState(false)
@@ -1917,48 +1921,37 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       const data = status.data
       const s = (data && data.settings) || {}
       const d = (data && data.described) || null
-      // ⚠ 0.7.7 会话级档位：`sessionEffective/sessionDescribed` 是**本会话生效**的值
-      //   （全局 + 该会话覆盖的合并结果）。没有就回退全局，行为与改动前一致。
+      // 当前会话真正生效的配置始终独立保存一份，用于拦截/放行运行时。
       const eff = (data && data.sessionEffective) || s
       const effD = (data && data.sessionDescribed) || d
       const tier = (effD && typeof effD.tier === 'string') ? effD.tier : tierOfSettings(eff)
-      // 把档位补丁写进【本会话的覆盖】：只动这个会话，全局默认保持原样。
-      // 形状与 settings.js 的 bySession 一致；越界键（bash/model 等）会被后端丢弃并记问题，
-      // 所以这里只传档位四件套。
-      const withSession = (patch) => ({
-        ...((s.bySession && typeof s.bySession === 'object') ? s.bySession : {}),
-        [sessionId]: { ...(((s.bySession && typeof s.bySession === 'object') ? s.bySession[sessionId] : null) || {}), ...patch },
-      })
-      // 协作基调（0.7.8）：会话覆盖优先，其次全局，默认 neutral。
-      // 与档位**正交**——可以「轻度 + 硬邦邦」，也可以「重度 + 普通」。
-      const framing = (eff && (eff.framing === 'hard' || eff.framing === 'neutral')) ? eff.framing : 'neutral'
-      // 点档位 = 整份替换该会话覆盖（避免带上陈旧展开值），但**必须保留已选的协作基调**：
-      // 基调与档位是两件事，换档位不该把基调一起抹掉。
-      const replaceTier = (t) => {
-        const all = (s.bySession && typeof s.bySession === 'object') ? s.bySession : {}
-        const prev = all[sessionId] || {}
-        const keep = (prev.framing === 'hard' || prev.framing === 'neutral') ? { framing: prev.framing } : {}
-        return { ...all, [sessionId]: { ...keep, tier: t } }
-      }
+      const permission = eff.permission === 'review' ? 'review' : 'auto'
+
+      // UI 编辑范围：默认编辑当前会话；显式切到“全局默认”时才改顶层设置。
+      const editingSession = configScope === 'session' && !!sessionId
+      const edit = editingSession ? eff : s
+      const editD = editingSession ? effD : d
+      const editTier = (editD && typeof editD.tier === 'string') ? editD.tier : tierOfSettings(edit)
+      const editTierOff = editTier === 'off'
+      const editFraming = (edit && (edit.framing === 'hard' || edit.framing === 'neutral')) ? edit.framing : 'neutral'
+      const editPermission = edit.permission === 'review' ? 'review' : 'auto'
+      const historyMode = edit.historyMode === 'full' ? 'full' : 'turns'
+      const turns = Number.isInteger(edit.turns) ? edit.turns : DEFAULT_TURNS
+      const rtKnown = !!data
+      const readTools = rtKnown ? !!edit.readTools : false
+
+      // tierOff 是【当前会话运行态】，不能跟随 UI scope；否则查看全局默认时会改变拦截行为。
       const tierOff = tier === 'off'
-      // 关闭档 ⇒ **界面也要清干净**（真机 2026-09-22：拨到关闭档后，上一轮的优化上下文还在被注入）。
-      // 宿主侧已按政策硬短路 + 清掉缓存里的包；客户端这边同步撤掉拦截浮层与进度，
-      // 否则"关了档，屏幕上还挂着上一轮的包"看起来就像它还在工作（用户看到的正是这个）。
       React.useEffect(() => {
         if (!tierOff) return
         setHold(null)
         setProg(null)
         setOvOpen(false)
       }, [tierOff, sessionId])
-      const permission = s.permission === 'review' ? 'review' : 'auto'
-      const historyMode = s.historyMode === 'full' ? 'full' : 'turns'
-      const turns = Number.isInteger(s.turns) ? s.turns : DEFAULT_TURNS
-      const rtKnown = !!(data && (hasOwn(s, 'readTools') || hasOwn(d, 'readTools')))
-      const readTools = rtKnown ? !!(hasOwn(s, 'readTools') ? s.readTools : d.readTools) : false
-      // 内置 Bash（0.7.1）：与 readTools 同款三态纪律 —— 第一次 /status 读到它之前不发这个字段，
-      // 避免"没读到就当关"把用户的设置误写回去。
-      const bashKnown = !!(data && (hasOwn(s, 'bash') || hasOwn(d, 'bash')))
-      const bashOn = bashKnown ? !!(hasOwn(s, 'bash') ? s.bash : d.bash) : true
+
+      // Bash 是宿主工具注册，物理上就是全局资源，绝不伪装成 session 配置。
+      const bashKnown = !!data
+      const bashOn = bashKnown ? !!s.bash : true
 
       const save = async (patch) => {
         setBusy(true); setMsg(null)
@@ -1975,7 +1968,30 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           ? { kind: 'warn', text: L('已保存，但有 ' + probs.length + ' 项被按默认处理', 'Saved, but ' + probs.length + ' value(s) fell back to defaults') + staleSchemaHint(r.problems) }
           : { kind: 'ok', text: L('已保存', 'Saved') })
         refreshStatus()                                 // 成功后重新拉一次，界面与后端一致
+            const saveRequest = async (path, body) => {
+        setBusy(true); setMsg(null)
+        const r = await apiPost(path, body)
+        setBusy(false)
+        if (!r || r.ok !== true) {
+          setMsg({ kind: 'err', text: L('保存失败：', 'Save failed: ') + reasonText(r && r.reason) })
+          setFailTick((t) => t + 1)
+          refreshStatus()
+          return false
+        }
+        const probs = (r.problems || []).filter((x) => x.kind !== 'unknown-field')
+        setMsg(probs.length
+          ? { kind: 'warn', text: L('已保存，但有 ' + probs.length + ' 项被按默认处理', 'Saved, but ' + probs.length + ' value(s) fell back to defaults') + staleSchemaHint(r.problems) }
+          : { kind: 'ok', text: L('已保存', 'Saved') })
+        refreshStatus()
+        return true
       }
+      const saveGlobal = (patch) => saveRequest('/settings', patch)
+      const saveSession = (patch, reset = false) => {
+        if (!sessionId) return saveGlobal(patch)
+        return saveRequest('/settings/session', { sessionId, patch: patch || {}, reset })
+      }
+      const save = (patch) => editingSession ? saveSession(patch) : saveGlobal(patch)
+      const resetCurrentSession = () => saveSession({}, true)
 
       // ── P11 前置拦截的运行时（放行 / 失败兜底 / 去重）──────────────────
       // 三条不变量：
@@ -2366,10 +2382,10 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       const cat = (catalog.data && typeof catalog.data === 'object') ? catalog.data : {}
       const routes = Array.isArray(cat.models) ? cat.models.slice() : []
       const mkey = (r) => JSON.stringify([r.provider, r.model])
-      const curKey = (s.model && typeof s.model === 'object') ? mkey(s.model) : 'inherit'
-      if (s.model && typeof s.model === 'object' && !routes.some((r) => mkey(r) === curKey)) {
+      const curKey = (edit.model && typeof edit.model === 'object') ? mkey(edit.model) : 'inherit'
+      if (edit.model && typeof edit.model === 'object' && !routes.some((r) => mkey(r) === curKey)) {
         // 当前值不在清单里也要显示出来，否则 select 会显示成第一项——那是界面在撒谎
-        routes.push({ provider: s.model.provider, model: s.model.model, label: s.model.provider + ' / ' + s.model.model })
+        routes.push({ provider: edit.model.provider, model: edit.model.model, label: edit.model.provider + ' / ' + edit.model.model })
       }
       const groups = []
       for (const r of routes) {
@@ -2428,7 +2444,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       const effortRow = (() => {
         const efforts = Array.isArray(effortsForModel) ? effortsForModel : []
         if (!effortKey) return null
-        const map = (s.effortByModel && typeof s.effortByModel === 'object') ? s.effortByModel : {}
+        const map = (edit.effortByModel && typeof edit.effortByModel === 'object') ? edit.effortByModel : {}
         const curEffort = (typeof map[effortKey] === 'string') ? map[effortKey] : ''
         const onPick = (e) => {
           const next = { ...map }
@@ -2524,7 +2540,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
               h('span', { style: S.optBtnText }, L('优化选项', 'Options')),
               h('span', { 'data-po06': 'options-summary', style: S.optSummary },
                 tierLabel(tier) + ' · ' + (permission === 'review' ? L('审查', 'Review') : L('自动', 'Auto'))
-                  + (rtKnown && readTools ? ' · ' + L('工具开', 'tools on') : '')),
+                  + (editingSession ? ' · ' + L('会话', 'session') : ' · ' + L('全局', 'global'))),
               h('span', { 'aria-hidden': 'true', style: S.optCaret }, optOpen ? '▴' : '▾'),
             ),
             // ② 「?」帮助（0.5 的形态：文字就是一个 ASCII `?`）；正文见 HELP-0.6.md（要求②）
@@ -2560,33 +2576,50 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
                 ? { left: optPos.left + 'px', bottom: optPos.bottom + 'px', ...(optPos.width ? { width: optPos.width + 'px' } : null) }
                 : { left: '16px', bottom: '84px', ...(region ? { width: Math.min(300, Math.max(120, region.w - 16)) + 'px' } : null) }) } },
               h('div', { style: S.optPopHead }, h(OptIcon), h('span', {}, L('优化选项', 'Options'))),
+              h('div', { style: S.optRow },
+                h('span', { style: S.optLabel }, L('配置范围', 'Scope')),
+                h(Segmented, {
+                  name: 'scope', value: editingSession ? 'session' : 'global',
+                  options: sessionId ? ['session', 'global'] : ['global'],
+                  label: (k) => k === 'session' ? L('当前会话', 'This session') : L('全局默认', 'Global default'),
+                  title: L('当前会话：只保存到本 session；全局默认：只影响没有覆盖的会话',
+                    'This session: save only here; Global default: affects sessions without overrides'),
+                  onPick: (v) => setConfigScope(v),
+                })),
+              editingSession && data && data.sessionHasOverride
+                ? h('button', {
+                  type: 'button', 'data-po06': 'session-reset', style: S.optWide,
+                  title: L('删除当前会话的全部覆盖，重新继承全局默认', 'Remove all overrides for this session and inherit global defaults'),
+                  onClick: resetCurrentSession,
+                }, L('恢复当前会话为全局默认', 'Reset this session to global defaults'))
+                : null,
               // ① 档位（从第一行搬来；分段控件本身没变）
               h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('档位', 'Tier')),
                 h(Segmented, {
-                  name: 'tier', value: tier, options: TIER_KEYS, label: (k) => tierLabel(k), failTick,
+                  name: 'tier', value: editTier, options: TIER_KEYS, label: (k) => tierLabel(k), failTick,
                   title: L('优化档位：关闭 / 轻度 / 标准 / 重度 —— 点击、按住拖动、或按 ←→ 方向键（Home/End 到两端）',
                     'Optimizer tier: Off / Low / High / Ultra — click, drag, or press the ←→ arrow keys (Home/End for the ends)'),
                   // ⚠ 点档位 = **整份替换**该会话的覆盖，不能与旧覆盖合并：
                   //   合并会把上一次的 assist/detail/budget 残留带进来，读取时它们会盖过新预设，
                   //   表现为"点了档位但档位不变"（用户实测 2026-09-27）。
-                  onPick: (v) => save({ bySession: replaceTier(v) }),
+                  onPick: (v) => save({ tier: v }),
                 })),
               // ①b 协作基调（0.7.8）：与档位正交，按会话存。语域本身就是效果来源（见 framing.js）。
               h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('协作基调', 'Tone')),
                 h(Segmented, {
-                  name: 'framing', value: framing, options: ['neutral', 'hard'], failTick,
+                  name: 'framing', value: editFraming, options: ['neutral', 'hard'], failTick,
                   label: (k) => (k === 'hard' ? L('硬邦邦', 'Hard') : L('普通', 'Plain')),
                   title: L('硬邦邦：用更直接、更来劲的语气推动执行（不改你的原话，也不放松「不替你拍板」的边界）',
                     'Hard: a blunter, more driven register (your words stay unchanged and decision boundaries stay intact)'),
-                  onPick: (v) => save({ bySession: withSession({ framing: v }) }),
+                  onPick: (v) => save({ framing: v }),
                 })),
               // ② 优化权限：档位 off 时禁用
               h('div', { style: S.optRow }, h('span', { style: S.optLabel }, L('权限', 'Permission')),
                 h(Segmented, {
-                  name: 'perm', value: permission, options: ['review', 'auto'],
+                  name: 'perm', value: editPermission, options: ['review', 'auto'],
                   label: (k) => (k === 'review' ? L('审查', 'Review') : L('自动', 'Auto')),
-                  disabled: tierOff, failTick,
-                  title: tierOff
+                  disabled: editTierOff, failTick,
+                  title: editTierOff
                     ? L('优化权限：审查 / 自动 —— ' + offTip, 'Permission: Review / Auto — ' + offTip)
                     : L('优化权限：审查 = 先给出处与依据待你确认；自动 = 直接生效',
                       'Permission: Review = show sources and rationale for confirmation first; Auto = apply directly'),
@@ -2615,7 +2648,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
             h('span', { 'data-po06': 'ctx-wrap', style: { ...S.grp, ...(tierOff ? S.dis : null) } },
               h('span', { style: { opacity: .7 } }, L('上下文', 'Context')),
               h(TurnsRange, {
-                value: turns, disabled: tierOff, failTick, mode: historyMode,
+                value: turns, disabled: editTierOff, failTick, mode: historyMode,
                 disabledTip: L('上下文：' + offTip, 'Context: ' + offTip),
                 title: historyMode === 'full'
                   ? L('上下文（全文）：开 = 读入我手上保留的全部回合；关 = 完全不读', 'Context (full): On = read every turn I still hold; Off = read nothing')
@@ -2626,15 +2659,15 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
               h('span', { 'data-po06': 'ctx-num', style: { minWidth: '16px', textAlign: 'center', opacity: .85 } },
                 historyMode === 'full' ? (turns > 0 ? L('开', 'On') : L('关', 'Off')) : String(turns)),
               h('button', {
-                type: 'button', disabled: tierOff, 'data-po06': 'ctx-mode', 'data-po06-value': historyMode,
-                style: { ...S.small, ...(tierOff ? S.dis : null) },
-                title: tierOff
+                type: 'button', disabled: editTierOff, 'data-po06': 'ctx-mode', 'data-po06-value': historyMode,
+                style: { ...S.small, ...(editTierOff ? S.dis : null) },
+                title: editTierOff
                   ? L('上下文模式：回合 / 全文 —— ' + offTip, 'Context mode: Turns / Full — ' + offTip)
                   : L('上下文模式：回合 = 只读最近几回合；全文 = 与工作 AI 看到的一致',
                     'Context mode: Turns = only the last few turns; Full = the same as the working AI sees'),
                 // ⚠ 处理函数里也要挡一道：`disabled` 属性只管"浏览器不发事件"，
                 // 挡不住程序化派发的事件（真机上还有别的插件在派发/合成事件）。禁用就是**不发请求**。
-                onClick: () => { if (tierOff) return; save({ historyMode: historyMode === 'full' ? 'turns' : 'full' }) },
+                onClick: () => { if (editTierOff) return; save({ historyMode: historyMode === 'full' ? 'turns' : 'full' }) },
               }, historyMode === 'full' ? L('全文', 'Full') : L('回合', 'Turns')),
             ),
             // ⑤ 读项目文件：**永远可用**（不受档位影响）；三态纪律见上面的注释
@@ -2676,9 +2709,9 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
                   setMsg({ kind: 'warn', text: L('还没读到当前设置，这次没有发送', 'Current setting not read yet; nothing was sent') })
                   return
                 }
-                save({ bash: !bashOn })
+                saveGlobal({ bash: !bashOn })
               },
-            }, L('内置 Bash:', 'Built-in Bash: ')
+            }, L('内置 Bash（全局）:', 'Built-in Bash (global): ')
               + (bashKnown ? (bashOn ? L('开', 'On') : L('关', 'Off')) : L('…', '…'))),
             // 详情入口（用户 2026-09-21 要求：文字直接叫「详情」，**保留灰绿状态灯**；
             // 面板里不再重复"它在替我做什么 / 最近几轮"——拦截界面已经让人看见模型替我们做了什么）
