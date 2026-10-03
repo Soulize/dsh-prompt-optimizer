@@ -49,6 +49,21 @@ test('当前可用的 steer 主按钮优先决定 Enter 的发送模式', () => 
   assert.equal(d.currentSendMode(ended, labels), 'queue')
 })
 
+
+test('Ctrl/Cmd+Enter 使用 DSH 官方互补 Queue/Steer 语义', () => {
+  const d = load()
+  const steer = d.steerLabelsNow()
+  const queue = d.queueLabelsNow()
+  const queuePrimary = { querySelectorAll: () => [button('Queue message')] }
+  const steerPrimary = { querySelectorAll: () => [button('Steer message')] }
+  const idlePrimary = { querySelectorAll: () => [button('Send message')] }
+  assert.equal(d.keyDeliveryMode(queuePrimary, steer, queue, false), 'queue')
+  assert.equal(d.keyDeliveryMode(queuePrimary, steer, queue, true), 'steer')
+  assert.equal(d.keyDeliveryMode(steerPrimary, steer, queue, false), 'steer')
+  assert.equal(d.keyDeliveryMode(steerPrimary, steer, queue, true), 'queue')
+  assert.equal(d.keyDeliveryMode(idlePrimary, steer, queue, true), 'queue', '非运行态 accelerated 仍是 queue')
+})
+
 test('steer 放行必须走 DSH 原生按钮，而不是公开 inputActions.submit(queue)', () => {
   assert.match(source, /deliveryMode === 'steer'/)
   assert.match(source, /currentSteerButton\(card\)/)
