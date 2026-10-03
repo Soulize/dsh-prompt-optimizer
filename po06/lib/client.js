@@ -1778,6 +1778,8 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
     // **唯一的新轮子**：0.5 的解释层在客户端、我们的在宿主 ⇒ 拦下后要 POST /interpret 让宿主先算。
     const SEND_KEYS = ['input.send', 'input.send.queue', 'input.send.steer']
     const STEER_FALLBACK_LABELS = Object.freeze(['插话发送', 'Steer message'])
+    const QUEUE_FALLBACK_LABELS = Object.freeze(['排队发送', 'Queue message'])
+    const SEND_FALLBACK_LABELS = Object.freeze(['发送消息', 'Send message', ...QUEUE_FALLBACK_LABELS, ...STEER_FALLBACK_LABELS])
     function steerLabelsNow() {
       const out = new Set(STEER_FALLBACK_LABELS)
       try {
@@ -1785,6 +1787,17 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         if (bind) {
           const v = bind('input.send.steer')
           if (typeof v === 'string' && v && v !== 'input.send.steer') out.add(v)
+        }
+      } catch { /* fallback labels remain */ }
+      return out
+    }
+    function queueLabelsNow() {
+      const out = new Set(QUEUE_FALLBACK_LABELS)
+      try {
+        const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
+        if (bind) {
+          const v = bind('input.send.queue')
+          if (typeof v === 'string' && v && v !== 'input.send.queue') out.add(v)
         }
       } catch { /* fallback labels remain */ }
       return out
@@ -1798,6 +1811,23 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       for (const btn of buttons) {
         if (sendModeForButton(btn, steerLabels) === 'steer' && !btn.disabled) return 'steer'
       }
+      return 'queue'
+    }
+    const keyDeliveryMode = (card, steerLabels, queueLabels, accelerated) => {
+      const buttons = composerButtons(card).filter((btn) => !btn.disabled)
+      const hasSteer = buttons.some((btn) => {
+        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
+        return label && steerLabels.has(label)
+      })
+      const hasQueue = buttons.some((btn) => {
+        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
+        return label && queueLabels.has(label)
+      })
+      if (!accelerated) return hasSteer ? 'steer' : 'queue'
+      // DSH 官方 resolveSubmitMode：运行中 accelerated 是普通 Enter 的互补；
+      // 非运行态主按钮是普通“发送消息”，既无 steer 也无 queue 专用标签 ⇒ 仍是 queue。
+      if (hasSteer) return 'queue'
+      if (hasQueue) return 'steer'
       return 'queue'
     }
     const currentSteerButton = (card) => {
@@ -2302,9 +2332,10 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       // 拦截监听：**捕获阶段挂在 window 上**（早于 React 根容器与编辑器自身处理器；0.5:3095）
       React.useEffect(() => {
         if (!canArm || tierOff || !data) return undefined       // 关闭档 / 状态未知 / 没有放行通道 ⇒ 完全不拦
-        const sendLabels = new Set()
+        const sendLabels = new Set(SEND_FALLBACK_LABELS)
         const steerLabels = steerLabelsNow()
-        const stopLabels = new Set()
+        const queueLabels = queueLabelsNow()
+        const stopLabels = new Set(['停止生成', 'Stop generating'])
         // 诊断：**监听器到底挂上没有 / 判定卡在哪一条**，都必须在真机上看得见。
         // 第一版只写了"拦截计数"，于是真机上次秒发现"消息照发、计数还是 0"却无从判断是哪一环——
         // 这里把"看见了几个事件"和"最后一次为什么放行"都暴露成标记（有事件而计数不动 = 判定问题，
@@ -2321,7 +2352,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           try {
             const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
             if (!bind) return
-            for (const k of SEND_KEYS) { const v = bind(k); if (typeof v === 'string' && v && v !== k) { sendLabels.add(v); if (k === 'input.send.steer') steerLabels.add(v) } }
+            for (const k of SEND_KEYS) { const v = bind(k); if (typeof v === 'string' && v && v !== k) { sendLabels.add(v); if (k === 'input.send.steer') steerLabels.add(v); if (k === 'input.send.queue') queueLabels.add(v) } }
             const stop = bind('input.stop'); if (typeof stop === 'string' && stop && stop !== 'input.stop') stopLabels.add(stop)
           } catch { /* 字典不可用 ⇒ 点击路径走结构兜底 */ }
         }
@@ -2329,8 +2360,11 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         const draftNow = () => composerDraft(composerCard(rootRef.current)).trim()
         const wantKey = (e) => {
           if (!isActiveInstance()) return 'stale-instance'
-          if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return 'not-plain-enter'
+          if (e.key !== 'Enter') return 'not-enter'
+          if (e.shiftKey || e.altKey || (e.ctrlKey && e.metaKey)
+            || (typeof e.getModifierState === 'function' && e.getModifierState('AltGraph'))) return 'unsupported-modifier'
           if (e.isComposing === true || e.keyCode === 229) return 'composing'
+          if (e.repeat === true) return 'repeat'
           const card = composerCard(rootRef.current)
           if (!card) return 'no-card'
           if (!focusInComposer(card, e.target)) return 'focus-outside'
@@ -2350,7 +2384,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           if (!draftNow()) return 'empty-draft'                                    // 空草稿时主按钮是"停止生成"，绝不能吞
           const label = btn.getAttribute('aria-label')
           if (label && stopLabels.has(label)) return 'stop-button'
-          return ((label && sendLabels.has(label)) || lastComposerButton(card) === btn) ? null : 'not-send-button'
+          return (label && sendLabels.has(label)) ? null : 'not-send-button'
         }
         const onKey = (e) => {
           const why = wantKey(e)
@@ -2358,9 +2392,11 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           e.preventDefault(); e.stopPropagation()
           if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation()
           markSeen('key:intercepted')
-          // 普通 Enter 的发送模式与此刻主发送按钮一致；运行中用户可把 Enter 配成 steer。
+          // 普通 Enter 跟主按钮；Ctrl/Cmd+Enter 按 DSH 官方语义走它的互补 Queue/Steer。
           const card = composerCard(rootRef.current)
-          beginHold(draftNow(), 'key', currentSendMode(card, steerLabels))
+          const accelerated = e.ctrlKey === true || e.metaKey === true
+          beginHold(draftNow(), accelerated ? 'key-accelerated' : 'key',
+            keyDeliveryMode(card, steerLabels, queueLabels, accelerated))
         }
         const onClick = (e) => {
           if (nativeReleaseBypass.current > 0) {
@@ -3560,7 +3596,7 @@ const react = require("react")
         composerRegion, clampOvPos, clampOvSize, defaultOvPos, defaultBallPos,
         ovReflowWatch, ovReflowAll, EDITABLE_SEL,
         holdBridgeRead, holdBridgeWrite, holdBridgeOn,
-        sendModeForButton, currentSendMode, steerLabelsNow,
+        sendModeForButton, currentSendMode, keyDeliveryMode, steerLabelsNow, queueLabelsNow,
         themeTokens: THEME_TOKENS,
         tokenVars: TOKEN_VARS,
         themeIsDark,
