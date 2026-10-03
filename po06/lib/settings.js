@@ -120,7 +120,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 })
 
 /** 允许按会话覆盖的键（档位四件套；其余设置保持全局）。 */
-export const SESSION_KEYS = Object.freeze(['assist', 'detail', 'budget', 'tier', 'framing'])
+export const SESSION_KEYS = Object.freeze(['assist', 'detail', 'budget', 'tier', 'framing', 'permission', 'historyMode', 'turns', 'readTools', 'model', 'effortByModel'])
 
 /** 斜杠命令名单上限（32 个字符/条，最多 16 条）。 */
 export const SLASH_REVIEW_MAX = 16
@@ -177,31 +177,79 @@ export function normalizeSettings(raw) {
     }
     return v
   }
-  // 按会话的档位覆盖：{ [sessionId]: { assist?, detail?, budget?, tier? } }。
-  // 只认 SESSION_KEYS 四个档位键；越界的键（如 bash/model）**丢弃并记问题**——
-  // 它们是这台机器的属性，不该被某个会话改掉。逐条校验、坏条目单条丢弃，不整表回退。
+  // 按会话覆盖：每个 session 保存真正属于“这个会话怎么优化”的设置。
+  // Bash / slashReview 仍是宿主级全局设置：前者控制工具注册，后者控制命令拦截表，
+  // 伪装成按会话只会造成“UI 看起来独立、实际全局生效”的假配置。
   const pickSessionMap = () => {
     const v = src.bySession
     if (v === undefined) return {}
-    if (!isPlainObject(v)) { problems.push({ key: "bySession", kind: "wrong-type", got: v, used: {} }); return {} }
-    const domains = { assist: ASSIST_MODES, detail: DETAIL_LEVELS, budget: BUDGET_LEVELS, tier: TIER_LEVELS, framing: FRAMINGS }
+    if (!isPlainObject(v)) { problems.push({ key: 'bySession', kind: 'wrong-type', got: v, used: {} }); return {} }
+    const stringDomains = {
+      assist: ASSIST_MODES, detail: DETAIL_LEVELS, budget: BUDGET_LEVELS, tier: TIER_LEVELS,
+      framing: FRAMINGS, permission: PERMISSIONS, historyMode: HISTORY_MODES,
+    }
     const out = {}
     for (const [sid, ov] of Object.entries(v)) {
-      if (typeof sid !== "string" || !sid) continue
-      if (!isPlainObject(ov)) { problems.push({ key: "bySession[" + sid + "]", kind: "wrong-type", got: ov, used: undefined }); continue }
+      if (typeof sid !== 'string' || !sid) continue
+      if (!isPlainObject(ov)) {
+        problems.push({ key: 'bySession[' + sid + ']', kind: 'wrong-type', got: ov, used: undefined })
+        continue
+      }
       const clean = {}
       for (const k of Object.keys(ov)) {
-        if (!SESSION_KEYS.includes(k)) { problems.push({ key: "bySession[" + sid + "]." + k, kind: "not-session-scoped", got: ov[k], used: undefined }); continue }
+        if (!SESSION_KEYS.includes(k)) {
+          problems.push({ key: 'bySession[' + sid + '].' + k, kind: 'not-session-scoped', got: ov[k], used: undefined })
+          continue
+        }
         const val = ov[k]
         if (val === undefined) continue
-        if (typeof val !== "string" || !domains[k].includes(val)) { problems.push({ key: "bySession[" + sid + "]." + k, kind: "not-in-domain", got: val, used: undefined }); continue }
-        clean[k] = val
+        if (stringDomains[k]) {
+          if (typeof val !== 'string' || !stringDomains[k].includes(val)) {
+            problems.push({ key: 'bySession[' + sid + '].' + k, kind: 'not-in-domain', got: val, used: undefined })
+          } else clean[k] = val
+          continue
+        }
+        if (k === 'turns') {
+          if (typeof val !== 'number' || !Number.isInteger(val) || val < TURNS_MIN || val > TURNS_MAX) {
+            problems.push({ key: 'bySession[' + sid + '].turns', kind: typeof val === 'number' ? 'out-of-range' : 'wrong-type', got: val, used: undefined })
+          } else clean.turns = val
+          continue
+        }
+        if (k === 'readTools') {
+          if (typeof val !== 'boolean') problems.push({ key: 'bySession[' + sid + '].readTools', kind: 'wrong-type', got: val, used: undefined })
+          else clean.readTools = val
+          continue
+        }
+        if (k === 'model') {
+          if (val === null) clean.model = null
+          else if (!isPlainObject(val) || typeof val.provider !== 'string' || !val.provider || typeof val.model !== 'string' || !val.model) {
+            problems.push({ key: 'bySession[' + sid + '].model', kind: 'not-a-route', got: val, used: undefined })
+          } else clean.model = { provider: val.provider, model: val.model }
+          continue
+        }
+        if (k === 'effortByModel') {
+          if (!isPlainObject(val)) {
+            problems.push({ key: 'bySession[' + sid + '].effortByModel', kind: 'wrong-type', got: val, used: undefined })
+            continue
+          }
+          const efforts = {}
+          for (const [route, effort] of Object.entries(val)) {
+            const slash = route.indexOf('/')
+            if (slash <= 0 || slash === route.length - 1) {
+              problems.push({ key: 'bySession[' + sid + '].effortByModel[' + route + ']', kind: 'not-a-route', got: route, used: undefined })
+              continue
+            }
+            if (typeof effort !== 'string' || !effort.trim()) {
+              problems.push({ key: 'bySession[' + sid + '].effortByModel[' + route + ']', kind: 'wrong-type', got: effort, used: undefined })
+              continue
+            }
+            efforts[route] = effort
+          }
+          clean.effortByModel = efforts
+        }
       }
-      // ⚠ **只存用户写的意图，不在这里展开**（2026-09-27 修，用户实测）：
-      //   早先这里把 `tier` 就地展开成 assist/detail/budget 再存回去。于是第二次点档位时：
-      //   写入 {tier:新档} 会与**上一次展开留下的陈旧三项**合并；读取时那三项又会盖过新预设，
-      //   推导档位不变 ⇒ 界面表现为"点一次正常、之后固定"。
-      //   所以展开挪到**读取时**（policy.js 的 effectiveSettings）：存储里永远只有意图本身。
+      // 只存用户写下的覆盖意图。tier 的预设在 effectiveSettings() 读取时展开，
+      // 避免连续切档时被上一次展开残留反盖。
       if (Object.keys(clean).length) out[sid] = clean
     }
     return out
@@ -371,31 +419,17 @@ export function writeSettings({ path, patch, now = Date.now() } = {}) {
   } else {
     for (const k of GATE_KEYS) if (before[k] !== undefined) gateFrom[k] = before[k]
   }
-  if (gateFrom.settingsVersion === undefined) gateFrom.settingsVersion = 1     // 0.6 自己的配置标记（值同 migration 的 NEW_SETTINGS_VERSION）
-  const merged = mergeSettings(before, patch)
-  // ── issue #16：**档位就是启用开关** ──────────────────────────────────────
-  // README 写的是"装完之后在面板上拨档位（关闭/轻度/标准/重度就是启用开关）"，但实现里
-  // `enabled`/`rollout` 只被**原样搬运**（见上面的 gateFrom）⇒ 全包**没有任何代码路径**会写
-  // `enabled: true` ⇒ 全新安装的用户无论怎么拨档位，闸门一律 `gate:rollout-off`，
-  // 界面报「失败：gate:rollout-off」。报告者已用同一实例手工写字段反证"闸门本身是好的"。
-  // 两条边界按"别越权"设计：
-  //   ① 灰度名单（rollout.mode === 'allowlist'）**只补 enabled，不动名单**；
-  //   ② 改模型/权限/上下文/内置 Bash 的写入**不碰**启用意图（否则"我改个模型它自己开了"）。
-  const LEVEL_KEYS = ['tier', 'assist', 'detail', 'budget']
-  const gatePatch = {}
-  if (isPlainObject(patch) && LEVEL_KEYS.some((k) => patch[k] !== undefined)) {
-    if (tierOf(merged.settings) === 'off') {
-      gatePatch.enabled = false
-      // 显式关闭 ⇒ 理由码必须是"用户的选择"，不是回落来的 off（用户要能区分这两者）
-      gatePatch.rollout = { mode: 'off' }
-    } else {
-      gatePatch.enabled = true
-      const cur = gateFrom.rollout !== undefined ? gateFrom.rollout : before.rollout
-      if (!(isPlainObject(cur) && cur.mode === 'allowlist')) gatePatch.rollout = { mode: 'all' }
-    }
+  if (gateFrom.settingsVersion === undefined) gateFrom.settingsVersion = 1
+  // po06.json 是本插件独占的配置文件。首次创建或旧版本漏写启用字段时，
+  // 自动补齐“已启用 + 全量 rollout”；显式 false/off/allowlist 永远保留，不替用户翻转。
+  if (!corruptBefore) {
+    if (gateFrom.enabled === undefined) gateFrom.enabled = true
+    if (gateFrom.rollout === undefined) gateFrom.rollout = { mode: 'all' }
   }
-  // gatePatch **最后**展开：档位写入的启用意图要盖过搬运来的旧值。
-  const after = { ...gateFrom, ...before, ...merged.settings, ...gatePatch }
+  const merged = mergeSettings(before, patch)
+  // gate 与 tier 解耦：gate 表示插件能否装配；tier=off 只表示本作用域不优化。
+  // 否则一个 session 设为关闭会把整个插件 gate 写成 off，连其它 session 一起杀掉。
+  const after = { ...gateFrom, ...before, ...merged.settings }
   const out = {
     ok: false, before, after, backup: null, problems: merged.problems, path,
     recoveredFromCorrupt: corruptBefore,
@@ -433,6 +467,65 @@ export function writeSettings({ path, patch, now = Date.now() } = {}) {
     if (a !== b) return { ...out, reason: 'readback-mismatch:' + k, after: back }
   }
   return { ...out, ok: true, after: back }
+}
+
+
+/**
+ * 首装/升级时确保 po06.json 存在且 gate 字段完整。
+ * 已有显式 enabled/rollout 决策原样保留；坏 JSON 不自动覆盖，交给现有备份/修复路径处理。
+ */
+export function ensureSettingsFile({ path, now = Date.now() } = {}) {
+  const raw = (() => { try { return existsSync(path) ? readFileSync(path, 'utf8') : null } catch { return null } })()
+  const parsed = raw === null ? null : parseJsonText(raw)
+  if (raw !== null && parsed === null) {
+    return { ok: false, changed: false, reason: 'existing-config-unparsable', path }
+  }
+  const missing = parsed === null
+    || parsed.settingsVersion === undefined
+    || parsed.enabled === undefined
+    || parsed.rollout === undefined
+  if (!missing) return { ok: true, changed: false, path, after: parsed }
+  const r = writeSettings({ path, patch: {}, now })
+  return { ...r, changed: r.ok === true }
+}
+
+/**
+ * 原子更新一个 session 的覆盖。调用端只发“这个 session 改了什么”，
+ * 服务端从最新文件合并，避免客户端拿旧 bySession 快照把其它会话的新配置覆盖掉。
+ */
+export function writeSessionSettings({ path, sessionId, patch, reset = false, now = Date.now() } = {}) {
+  const sid = String(sessionId == null ? '' : sessionId).trim()
+  if (!sid) return { ok: false, reason: 'session-required', path, problems: [] }
+  const before = readJson(path) || {}
+  const base = normalizeSettings(before).settings
+  const all = { ...(base.bySession || {}) }
+
+  if (reset === true) {
+    delete all[sid]
+    return writeSettings({ path, patch: { bySession: all }, now })
+  }
+
+  const p = isPlainObject(patch) ? patch : {}
+  const unknown = Object.keys(p).filter((k) => !SESSION_KEYS.includes(k))
+    .map((k) => ({ key: 'bySession[' + sid + '].' + k, kind: 'not-session-scoped', got: p[k], used: undefined }))
+  const next = { ...(all[sid] || {}) }
+
+  // 选一个新 tier 就应当用新预设；清掉旧的三项显式覆盖，防止它们反盖新 tier。
+  if (p.tier !== undefined) {
+    delete next.assist
+    delete next.detail
+    delete next.budget
+  }
+  for (const k of SESSION_KEYS) if (p[k] !== undefined) next[k] = p[k]
+
+  const checked = normalizeSettings({ ...base, bySession: { ...all, [sid]: next } })
+  const clean = checked.settings.bySession[sid]
+  if (clean && Object.keys(clean).length) all[sid] = clean
+  else delete all[sid]
+
+  const r = writeSettings({ path, patch: { bySession: all }, now })
+  const sessionProblems = checked.problems.filter((x) => String(x.key || '').startsWith('bySession[' + sid + ']'))
+  return { ...r, problems: [...unknown, ...sessionProblems, ...(r.problems || []).filter((x) => !String(x.key || '').startsWith('bySession[' + sid + ']'))] }
 }
 
 /** 给界面看的一行摘要（§14.1：不把内部 schema/hash 堆进主流程）。 */
