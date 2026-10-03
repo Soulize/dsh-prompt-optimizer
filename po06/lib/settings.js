@@ -420,16 +420,17 @@ export function writeSettings({ path, patch, now = Date.now() } = {}) {
     for (const k of GATE_KEYS) if (before[k] !== undefined) gateFrom[k] = before[k]
   }
   if (gateFrom.settingsVersion === undefined) gateFrom.settingsVersion = 1
-  // po06.json 是本插件独占的配置文件。首次创建或旧版本漏写启用字段时，
-  // 自动补齐“已启用 + 全量 rollout”；显式 false/off/allowlist 永远保留，不替用户翻转。
+  // po06.json 是本插件独占的配置文件。首次创建或旧版本漏写/写坏启用字段时，
+  // 自动修成“已启用 + 全量 rollout”；合法的 false/off/allowlist 永远保留，不替用户翻转。
   if (!corruptBefore) {
-    if (gateFrom.enabled === undefined) gateFrom.enabled = true
-    if (gateFrom.rollout === undefined) gateFrom.rollout = { mode: 'all' }
+    if (typeof gateFrom.enabled !== 'boolean') gateFrom.enabled = true
+    const rolloutMode = isPlainObject(gateFrom.rollout) ? gateFrom.rollout.mode : undefined
+    if (!['off', 'all', 'allowlist'].includes(rolloutMode)) gateFrom.rollout = { mode: 'all' }
   }
   const merged = mergeSettings(before, patch)
   // gate 与 tier 解耦：gate 表示插件能否装配；tier=off 只表示本作用域不优化。
-  // 否则一个 session 设为关闭会把整个插件 gate 写成 off，连其它 session 一起杀掉。
-  const after = { ...gateFrom, ...before, ...merged.settings }
+  // gateFrom 放最后：这样它对缺失/畸形 gate 的修复不会又被 before 里的坏值反盖。
+  const after = { ...before, ...merged.settings, ...gateFrom }
   const out = {
     ok: false, before, after, backup: null, problems: merged.problems, path,
     recoveredFromCorrupt: corruptBefore,
@@ -480,10 +481,11 @@ export function ensureSettingsFile({ path, now = Date.now() } = {}) {
   if (raw !== null && parsed === null) {
     return { ok: false, changed: false, reason: 'existing-config-unparsable', path }
   }
+  const rolloutMode = isPlainObject(parsed && parsed.rollout) ? parsed.rollout.mode : undefined
   const missing = parsed === null
     || parsed.settingsVersion === undefined
-    || parsed.enabled === undefined
-    || parsed.rollout === undefined
+    || typeof parsed.enabled !== 'boolean'
+    || !['off', 'all', 'allowlist'].includes(rolloutMode)
   if (!missing) return { ok: true, changed: false, path, after: parsed }
   const r = writeSettings({ path, patch: {}, now })
   return { ...r, changed: r.ok === true }
