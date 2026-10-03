@@ -25,7 +25,7 @@
 // 反面做法（这里明确不做）：回落到某个"看起来像"的路径、或返回空对象让后面莫名其妙地崩。
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, resolve, win32 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /** 要找的包名。bare specifier：解析基准由调用环境决定（见文件头 ②）。 */
@@ -35,6 +35,26 @@ export const OVERRIDE_ENV = 'DSH_PO06_LLM_LIB'
 
 /** 是不是"文件 URL"（`file://…`）；其余带 scheme 的（http 等）也算 URL，交给 import 处理。 */
 function isFileUrl(s) { return /^file:\/\//i.test(s) }
+
+function isAbsolutePortable(s) {
+  return isAbsolute(s) || win32.isAbsolute(s)
+}
+
+function windowsPathToFileUrl(s) {
+  const normalized = String(s).replace(/\\/g, '/')
+  if (normalized.startsWith('//')) {
+    const parts = normalized.slice(2).split('/')
+    const host = parts.shift() || ''
+    return 'file://' + host + '/' + parts.map((p) => encodeURIComponent(p)).join('/')
+  }
+  const parts = normalized.split('/')
+  const drive = parts.shift() || ''
+  return 'file:///' + drive + (parts.length ? '/' + parts.map((p) => encodeURIComponent(p)).join('/') : '')
+}
+
+function absolutePathToFileUrl(s) {
+  return win32.isAbsolute(s) && !isAbsolute(s) ? windowsPathToFileUrl(s) : pathToFileURL(s).href
+}
 
 /**
  * 把用户的写法归一成 `import()` 能吃的说明符。
@@ -47,7 +67,7 @@ export function toImportSpec(value) {
   const s = String(value == null ? '' : value).trim()
   if (!s) return null
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s
-  if (isAbsolute(s)) return pathToFileURL(s).href
+  if (isAbsolutePortable(s)) return absolutePathToFileUrl(s)
   return s
 }
 
@@ -80,7 +100,7 @@ export function llmLibCandidates({ env = {}, argv1 = '', cwd = '' } = {}) {
   if (raw) {
     let base = ''
     if (isFileUrl(raw)) base = raw
-    else if (isAbsolute(raw)) base = raw
+    else if (isAbsolutePortable(raw)) base = raw
     else if (cwd) base = resolve(String(cwd), raw)
     if (base) out.push({ source: 'host-entry', spec: LLM_PKG, base })
   }
@@ -103,7 +123,7 @@ export function resolveLlmLib({ env = {}, argv1 = '', cwd = '', resolveSpec, exi
   const tried = []
   for (const c of cands) {
     // 包名形式：必须有解析基准
-    if (c.spec === LLM_PKG || (!c.base && !isFileUrl(c.spec) && !isAbsolute(c.spec))) {
+    if (c.spec === LLM_PKG || (!c.base && !isFileUrl(c.spec) && !isAbsolutePortable(c.spec))) {
       if (!hostBase) { tried.push({ source: c.source, spec: c.spec, reason: 'no-base-to-resolve' }); continue }
       try {
         const p = res(hostBase, c.spec)
