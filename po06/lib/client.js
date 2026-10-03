@@ -1856,6 +1856,13 @@ window.__ModuleLoader__.load({
         return !btn.disabled && labels.has(label)
       }) || null
     }
+    const currentQueueButton = (card) => {
+      const labels = queueLabelsNow()
+      return composerButtons(card).find((btn) => {
+        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
+        return !btn.disabled && labels.has(label)
+      }) || null
+    }
 
     /** 从**我们自己渲染的节点**往上找输入卡片（不用产品类名/选择器）；找不到 = 不在会话页 ⇒ 一律放行。 */
     // ⚠ 选择器要**容错**：`contenteditable` 的合法写法不止 "true"（"" 与 "plaintext-only" 同样可编辑）。
@@ -1874,6 +1881,18 @@ window.__ModuleLoader__.load({
       if (!ed) return ''
       const raw = (typeof ed.innerText === 'string' && ed.innerText.length > 0) ? ed.innerText : (ed.textContent || '')
       return String(raw).replace(/\u00a0/g, ' ')
+    }
+    function dispatchAcceleratedSubmit(card) {
+      const ed = card ? card.querySelector(EDITABLE_SEL) : null
+      if (!ed || typeof ed.dispatchEvent !== 'function' || typeof KeyboardEvent !== 'function') return false
+      try {
+        ed.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', ctrlKey: true, bubbles: true, cancelable: true,
+        }))
+        return true
+      } catch {
+        return false
+      }
     }
     const composerButtons = (card) => (card ? Array.from(card.querySelectorAll('button')) : [])
     /**
@@ -2087,18 +2106,25 @@ window.__ModuleLoader__.load({
           const deliveryMode = h && h.deliveryMode === 'steer' ? 'steer' : 'queue'
           if (deliveryMode === 'steer') {
             const card = composerCard(rootRef.current)
-            const btn = currentSteerButton(card)
-            if (btn) {
-              // DSH 没把 submit(mode) 暴露给 slot；真正的 steer 只存在于原生输入栏的
-              // keyboard.submit('steer') 路径。这里把优化后的原文写回后，放行一次原生按钮。
+            const steerBtn = currentSteerButton(card)
+            const queueBtn = currentQueueButton(card)
+            if (steerBtn) {
+              // 主按钮本身就是 Steer：让 DSH 原生 onPrimary -> keyboard.submit('steer')。
               nativeReleaseBypass.current += 1
               const armed = nativeReleaseBypass.current
-              try { btn.click() } finally {
-                // 正常同步 click 会在捕获监听器里消费；若浏览器没派发，别把旁路留给下一次真人点击。
+              try { steerBtn.click() } finally {
                 if (nativeReleaseBypass.current === armed) nativeReleaseBypass.current -= 1
               }
+            } else if (queueBtn) {
+              // 主按钮是 Queue 时，Steer 只存在于 DSH 的“互补发送”快捷键。
+              // 重放 accelerated Enter，让官方 keymap/resolveSubmitMode 自己得到 steer。
+              nativeReleaseBypass.current += 1
+              const armed = nativeReleaseBypass.current
+              const dispatched = dispatchAcceleratedSubmit(card)
+              if (!dispatched || nativeReleaseBypass.current === armed) nativeReleaseBypass.current -= 1
+              if (!dispatched) inputActions.submit()
             } else {
-              // 优化期间运行已结束 / steer 按钮已消失：此刻已无可 steer 的回合，按普通消息提交。
+              // 优化期间运行已经结束：没有当前回合可插话，按普通消息提交。
               inputActions.submit()
             }
           } else {
@@ -2405,6 +2431,11 @@ window.__ModuleLoader__.load({
           return (label && sendLabels.has(label)) ? null : 'not-send-button'
         }
         const onKey = (e) => {
+          if (nativeReleaseBypass.current > 0) {
+            nativeReleaseBypass.current -= 1
+            markSeen('key:native-release')
+            return
+          }
           const why = wantKey(e)
           if (why) { markSeen('key:' + why); return }
           e.preventDefault(); e.stopPropagation()
@@ -3614,7 +3645,7 @@ const react = require("react")
         composerRegion, clampOvPos, clampOvSize, defaultOvPos, defaultBallPos,
         ovReflowWatch, ovReflowAll, EDITABLE_SEL,
         holdBridgeRead, holdBridgeWrite, holdBridgeOn,
-        sendModeForButton, keyDeliveryMode, steerLabelsNow, queueLabelsNow,
+        sendModeForButton, keyDeliveryMode, steerLabelsNow, queueLabelsNow, dispatchAcceleratedSubmit,
         themeTokens: THEME_TOKENS,
         tokenVars: TOKEN_VARS,
         themeIsDark,
