@@ -269,6 +269,81 @@ await t('handler：POST /settings 真写盘（原子+备份），非法值回落
   eq(wrongType.body.reason, 'body-not-json', '原因')
 })
 
+
+await t('handler：GET /status?session 返回完整会话生效值与原始覆盖', async () => {
+  const home = tmp()
+  writeFileSync(join(home, 'po06.json'), JSON.stringify({
+    settingsVersion: 1, enabled: true, rollout: { mode: 'all' },
+    permission: 'auto', historyMode: 'turns', turns: 6, readTools: false,
+    model: { provider: 'global', model: 'base' },
+    effortByModel: { 'global/base': 'medium' },
+    bySession: {
+      A: {
+        tier: 'heavy', permission: 'review', historyMode: 'full', turns: 3, readTools: true,
+        model: { provider: 'p', model: 'm' }, effortByModel: { 'p/m': 'high' },
+      },
+    },
+  }, null, 2), 'utf8')
+  const h = createControlHandler({ home })
+  const a = await GET(h, API_PREFIX + '/status?session=A')
+  eq(a.status, 200, 'A 状态 200')
+  eq(a.body.sessionHasOverride, true, 'A 有会话覆盖')
+  eq(a.body.sessionOverride.permission, 'review', '返回原始覆盖')
+  eq(a.body.sessionEffective.permission, 'review', '权限按 A 生效')
+  eq(a.body.sessionEffective.historyMode, 'full', '全文按 A 生效')
+  eq(a.body.sessionEffective.turns, 3, '回合数按 A 生效')
+  eq(a.body.sessionEffective.readTools, true, '只读工具按 A 生效')
+  eq(a.body.sessionEffective.model, { provider: 'p', model: 'm' }, '模型按 A 生效')
+  eq(a.body.sessionEffective.effortByModel, { 'p/m': 'high' }, '思考档位表按 A 生效')
+  const b = await GET(h, API_PREFIX + '/status?session=B')
+  eq(b.body.sessionHasOverride, false, 'B 没有覆盖')
+  eq(b.body.sessionOverride, {}, 'B 原始覆盖为空')
+  eq(b.body.sessionEffective.permission, 'auto', 'B 继承全局权限')
+  eq(b.body.sessionEffective.historyMode, 'turns', 'B 继承全局上下文')
+  eq(b.body.sessionEffective.model, { provider: 'global', model: 'base' }, 'B 继承全局模型')
+})
+
+await t('handler：POST /settings/session 部分更新不覆盖其它会话，并把 scope/sessionId 交给运行时钩子', async () => {
+  const home = tmp()
+  const p = join(home, 'po06.json')
+  writeFileSync(p, JSON.stringify({
+    settingsVersion: 1, enabled: true, rollout: { mode: 'all' },
+    historyMode: 'turns', turns: 6,
+    bySession: {
+      A: { historyMode: 'full', readTools: false },
+      B: { permission: 'review', readTools: true },
+    },
+  }, null, 2), 'utf8')
+  const seen = []
+  let tick = 100
+  const h = createControlHandler({
+    home, now: () => tick++,
+    onSettingsWritten: (info) => { seen.push(info); return { scope: info.scope, sessionId: info.sessionId } },
+  })
+  const r = await POST(h, API_PREFIX + '/settings/session', {
+    sessionId: 'A', patch: { turns: 4, permission: 'review' },
+  })
+  eq(r.status, 200, '会话写入成功')
+  eq(r.body.ok, true, 'ok')
+  const disk = JSON.parse(readFileSync(p, 'utf8'))
+  eq(disk.bySession.A.historyMode, 'full', 'A 未修改字段保留')
+  eq(disk.bySession.A.turns, 4, 'A 新字段写入')
+  eq(disk.bySession.A.permission, 'review', 'A 权限写入')
+  eq(disk.bySession.B, { permission: 'review', readTools: true }, 'B 必须逐字保持，不被 A 的旧快照覆盖')
+  eq(seen.length, 1, '运行时钩子调用一次')
+  eq(seen[0].scope, 'session', '钩子知道是 session 写入')
+  eq(seen[0].sessionId, 'A', '钩子知道具体 session')
+  eq(r.body.hook, { scope: 'session', sessionId: 'A' }, '钩子结果透传')
+  const reset = await POST(h, API_PREFIX + '/settings/session', { sessionId: 'A', reset: true })
+  eq(reset.status, 200, '重置成功')
+  const after = JSON.parse(readFileSync(p, 'utf8'))
+  eq(after.bySession.A, undefined, '只删 A')
+  eq(after.bySession.B, { permission: 'review', readTools: true }, 'B 仍保持')
+  const a = await GET(h, API_PREFIX + '/status?session=A')
+  eq(a.body.sessionHasOverride, false, '重置后 A 重新继承全局')
+  eq(a.body.sessionEffective.historyMode, 'turns', 'A 恢复全局上下文模式')
+})
+
 await t('handler：设置写盘后要通知宿主（onSettingsWritten）——关档必须触发"清包"这条路', async () => {
   const home = tmp()
   const p = join(home, 'po06.json')
