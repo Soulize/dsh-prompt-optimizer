@@ -1755,6 +1755,36 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
     //   fail-open：拿不到包就**按原文发出**（0.5 的 auto 档语义）
     // **唯一的新轮子**：0.5 的解释层在客户端、我们的在宿主 ⇒ 拦下后要 POST /interpret 让宿主先算。
     const SEND_KEYS = ['input.send', 'input.send.queue', 'input.send.steer']
+    const STEER_FALLBACK_LABELS = Object.freeze(['插话发送', 'Steer message'])
+    function steerLabelsNow() {
+      const out = new Set(STEER_FALLBACK_LABELS)
+      try {
+        const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
+        if (bind) {
+          const v = bind('input.send.steer')
+          if (typeof v === 'string' && v && v !== 'input.send.steer') out.add(v)
+        }
+      } catch { /* fallback labels remain */ }
+      return out
+    }
+    const sendModeForButton = (btn, steerLabels) => {
+      const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
+      return label && steerLabels && steerLabels.has(label) ? 'steer' : 'queue'
+    }
+    const currentSendMode = (card, steerLabels) => {
+      const buttons = composerButtons(card)
+      for (const btn of buttons) {
+        if (sendModeForButton(btn, steerLabels) === 'steer' && !btn.disabled) return 'steer'
+      }
+      return 'queue'
+    }
+    const currentSteerButton = (card) => {
+      const labels = steerLabelsNow()
+      return composerButtons(card).find((btn) => {
+        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
+        return !btn.disabled && labels.has(label)
+      }) || null
+    }
 
     /** 从**我们自己渲染的节点**往上找输入卡片（不用产品类名/选择器）；找不到 = 不在会话页 ⇒ 一律放行。 */
     // ⚠ 选择器要**容错**：`contenteditable` 的合法写法不止 "true"（"" 与 "plaintext-only" 同样可编辑）。
@@ -1874,6 +1904,8 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       const holdSeq = React.useRef(0)
       const abortRef = React.useRef(null)
       const canArmRef = React.useRef(false)
+      // native steer 放行的一次性旁路：只给 releaseHold() 自己触发的 DSH 原生 click 使用。
+      const nativeReleaseBypass = React.useRef(0)
       const [catalog, reloadCatalog] = useOnce(React.useCallback(() => apiGet('/models'), []))
       // 只在打开时才去读帮助（关着的时候不发请求）。
       // **把当前界面语言带上去**（用户 2026-09-22："英文 UI 适配应与 dsh 的语言对应"）：
@@ -1981,7 +2013,26 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           const heldName = slashNameOf(held)
           if (heldName && slashActive.has(heldName) && slashNameOf(outgoing) !== heldName) outgoing = held
           if (typeof inputActions.setDraft === 'function') inputActions.setDraft(outgoing)
-          inputActions.submit()
+          const deliveryMode = h && h.deliveryMode === 'steer' ? 'steer' : 'queue'
+          if (deliveryMode === 'steer') {
+            const card = composerCard(rootRef.current)
+            const btn = currentSteerButton(card)
+            if (btn) {
+              // DSH 没把 submit(mode) 暴露给 slot；真正的 steer 只存在于原生输入栏的
+              // keyboard.submit('steer') 路径。这里把优化后的原文写回后，放行一次原生按钮。
+              nativeReleaseBypass.current += 1
+              const armed = nativeReleaseBypass.current
+              try { btn.click() } finally {
+                // 正常同步 click 会在捕获监听器里消费；若浏览器没派发，别把旁路留给下一次真人点击。
+                if (nativeReleaseBypass.current === armed) nativeReleaseBypass.current -= 1
+              }
+            } else {
+              // 优化期间运行已结束 / steer 按钮已消失：此刻已无可 steer 的回合，按普通消息提交。
+              inputActions.submit()
+            }
+          } else {
+            inputActions.submit()
+          }
           setHold({ ...(h || {}), phase: mark || 'sent' })
           clearHoldSoon()
         } catch (e) {
@@ -2006,7 +2057,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         releaseHold(text, { ...h, reason: why }, 'sent')
       }
 
-      const beginHold = (text, via) => {
+      const beginHold = (text, via, deliveryMode = 'queue') => {
         if (holdRef.current) return                        // 去重：同一次发送的第二条事件直接忽略
         // 拦截计数**放在去重之后**：同一次发送可能同时命中 Enter 与 click（0.5 也要处理这件事，
         // 见 0.5:443-453 的 `coalesced`）。放在事件处理函数里会让同一次发送**记两次**，
@@ -2016,7 +2067,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         try { if (abortRef.current) abortRef.current.abort() } catch { /* 上一轮先断掉 */ }
         const ac = (typeof AbortController === 'function') ? new AbortController() : null
         abortRef.current = ac
-        const h = { text, via, t0: Date.now(), phase: 'optimizing', packet: '', chars: 0, ms: null, reason: null }
+        const h = { text, via, deliveryMode: deliveryMode === 'steer' ? 'steer' : 'queue', t0: Date.now(), phase: 'optimizing', packet: '', chars: 0, ms: null, reason: null }
         holdRef.current = h; setHold(h)
         apiPost('/interpret', { sessionId, text }, ac ? { signal: ac.signal } : undefined).then((r) => {
           if (my !== holdSeq.current) return                // ⚠ 过期世代：这一轮已被跳过/取消/重跑 ⇒ 结果丢弃
@@ -2229,6 +2280,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       React.useEffect(() => {
         if (!canArm || tierOff || !data) return undefined       // 关闭档 / 状态未知 / 没有放行通道 ⇒ 完全不拦
         const sendLabels = new Set()
+        const steerLabels = steerLabelsNow()
         const stopLabels = new Set()
         // 诊断：**监听器到底挂上没有 / 判定卡在哪一条**，都必须在真机上看得见。
         // 第一版只写了"拦截计数"，于是真机上次秒发现"消息照发、计数还是 0"却无从判断是哪一环——
@@ -2246,7 +2298,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           try {
             const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
             if (!bind) return
-            for (const k of SEND_KEYS) { const v = bind(k); if (typeof v === 'string' && v && v !== k) sendLabels.add(v) }
+            for (const k of SEND_KEYS) { const v = bind(k); if (typeof v === 'string' && v && v !== k) { sendLabels.add(v); if (k === 'input.send.steer') steerLabels.add(v) } }
             const stop = bind('input.stop'); if (typeof stop === 'string' && stop && stop !== 'input.stop') stopLabels.add(stop)
           } catch { /* 字典不可用 ⇒ 点击路径走结构兜底 */ }
         }
@@ -2283,17 +2335,23 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
           e.preventDefault(); e.stopPropagation()
           if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation()
           markSeen('key:intercepted')
-          // 计数在 beginHold 里、去重之后加（同一次发送可能同时命中 Enter 与 click，见那里的注释）
-          beginHold(draftNow(), 'key')
+          // 普通 Enter 的发送模式与此刻主发送按钮一致；运行中用户可把 Enter 配成 steer。
+          const card = composerCard(rootRef.current)
+          beginHold(draftNow(), 'key', currentSendMode(card, steerLabels))
         }
         const onClick = (e) => {
+          if (nativeReleaseBypass.current > 0) {
+            nativeReleaseBypass.current -= 1
+            markSeen('click:native-release')
+            return
+          }
           const btn = e.target && e.target.closest ? e.target.closest('button') : null
           const why = wantClick(btn)
           if (why) { markSeen('click:' + why); return }
           e.preventDefault(); e.stopPropagation()
           if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation()
           markSeen('click:intercepted')
-          beginHold(draftNow(), 'click')
+          beginHold(draftNow(), 'click', sendModeForButton(btn, steerLabels))
         }
         window.addEventListener('keydown', onKey, true)
         window.addEventListener('click', onClick, true)
@@ -3462,6 +3520,7 @@ const react = require("react")
         composerRegion, clampOvPos, clampOvSize, defaultOvPos, defaultBallPos,
         ovReflowWatch, ovReflowAll, EDITABLE_SEL,
         holdBridgeRead, holdBridgeWrite, holdBridgeOn,
+        sendModeForButton, currentSendMode, steerLabelsNow,
         themeTokens: THEME_TOKENS,
         tokenVars: TOKEN_VARS,
         themeIsDark,
