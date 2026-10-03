@@ -2652,7 +2652,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
                 )),
               effortRow,            // ④⑤⑥ 范围类：上下文 / 只读工具 / 详情 —— 沿用原来的控件，只是现在住在面板里
             // ③ 上下文：回合数量程 0–10 + 回合/全文切换，档位 off 时都禁用
-            h('span', { 'data-po06': 'ctx-wrap', style: { ...S.grp, ...(tierOff ? S.dis : null) } },
+            h('span', { 'data-po06': 'ctx-wrap', style: { ...S.grp, ...(editTierOff ? S.dis : null) } },
               h('span', { style: { opacity: .7 } }, L('上下文', 'Context')),
               h(TurnsRange, {
                 value: turns, disabled: editTierOff, failTick, mode: historyMode,
