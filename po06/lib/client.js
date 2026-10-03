@@ -846,11 +846,14 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
     function ControlForm({ status, refresh, sessionId }) {
       const [busy, setBusy] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
+      const [scope, setScope] = React.useState(() => sessionId ? 'session' : 'global')
+      React.useEffect(() => {
+        if (!sessionId && scope !== 'global') setScope('global')
+      }, [sessionId, scope])
       const s = (status && status.settings) || {}
-      // 会话级档位（0.7.8）：这三个控件显示【本会话生效值】，写入写进【本会话的覆盖】。
-      // 必须在本组件内定义：ControlForm 与 ControlBar 是两个独立作用域，
-      // 早先误把 ControlBar 的 eff/withSession 用到这里 ⇒ 渲染期未定义 ⇒ 面板调不动。
       const eff = (status && status.sessionEffective) || s
+      const editingSession = scope === 'session' && !!sessionId
+      const view = editingSession ? eff : s
       const [catalog, setCatalog] = React.useState({ models: [], problems: [] })
       React.useEffect(() => {
         let live = true
@@ -858,46 +861,65 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         return () => { live = false }
       }, [])
       const routes = (catalog.models || []).slice()
-      if (s.model && !routes.some((r) => r.provider === s.model.provider && r.model === s.model.model)) routes.push({ ...s.model, label: s.model.provider + ' / ' + s.model.model })
+      if (view.model && !routes.some((r) => r.provider === view.model.provider && r.model === view.model.model)) {
+        routes.push({ ...view.model, label: view.model.provider + ' / ' + view.model.model })
+      }
       const modelKey = (r) => JSON.stringify([r.provider, r.model])
       const modelLabels = { inherit: L('跟随会话模型','Follow session model') }
       routes.forEach((r) => { modelLabels[modelKey(r)] = r.label })
-      const save = async (patch) => {
+
+      const saveRequest = async (path, body) => {
         setBusy(true); setMsg(null)
-        const r = await apiPost('/settings', patch)
+        const r = await apiPost(path, body)
         setBusy(false)
-        if (!r.ok) { setMsg({ kind: 'err', text: L('保存失败：','Save failed: ') + reasonText(r.reason || L('未知原因','unknown')) }); return }
+        if (!r || r.ok !== true) {
+          setMsg({ kind: 'err', text: L('保存失败：','Save failed: ') + reasonText(r && r.reason) })
+          return false
+        }
         const probs = (r.problems || []).filter((x) => x.kind !== 'unknown-field')
         setMsg({ kind: probs.length ? 'warn' : 'ok',
           text: probs.length
-            ? L('已保存，但有 ','Saved, but ') + probs.length + L(' 项被按默认处理',' value(s) were handled by default') + staleSchemaHint(r.problems) + L('：',': ') + probs.map((x) => x.key + '=' + JSON.stringify(x.got)).join('、')
+            ? L('已保存，但有 ','Saved, but ') + probs.length + L(' 项被按默认处理',' value(s) were handled by default') + staleSchemaHint(r.problems)
             : L('已保存','Saved') + (r.backup ? L('（旧配置已备份）',' (old config backed up)') : '') })
         if (refresh) refresh()
+        return true
       }
-      // 没有会话（例如未打开会话的设置页）就退回全局写入，保持老行为可用。
-      const saveTier = (patch) => {
-        const sid = (sessionId === undefined || sessionId === null) ? '' : String(sessionId)
-        if (!sid) return save(patch)
-        const all = (s.bySession && typeof s.bySession === 'object') ? s.bySession : {}
-        return save({ bySession: { ...all, [sid]: { ...(all[sid] || {}), ...patch } } })
-      }
+      const saveGlobal = (patch) => saveRequest('/settings', patch)
+      const saveSession = (patch, reset = false) => sessionId
+        ? saveRequest('/settings/session', { sessionId, patch: patch || {}, reset })
+        : saveGlobal(patch)
+      const save = (patch) => editingSession ? saveSession(patch) : saveGlobal(patch)
+
       return h('div', { 'data-po06': 'controls' },
         h('div', { style: S.row },
+          h('span', { style: S.label }, L('配置范围','Scope')),
+          h(Segmented, {
+            name: 'control-scope', value: editingSession ? 'session' : 'global',
+            options: sessionId ? ['session', 'global'] : ['global'],
+            label: (k) => k === 'session' ? L('当前会话','This session') : L('全局默认','Global default'),
+            onPick: setScope,
+            title: L('会话配置独立保存；全局默认只给没有覆盖的会话继承', 'Session settings are isolated; global defaults are inherited only without overrides'),
+          })),
+        editingSession && status && status.sessionHasOverride
+          ? h('button', { type: 'button', style: S.btn, onClick: () => saveSession({}, true) },
+            L('恢复当前会话为全局默认','Reset this session to global defaults'))
+          : null,
+        h('div', { style: S.row },
           h('span', { style: S.label }, L('辅助','Assist')),
-          h(Options, { value: eff.assist, options: ['off', 'auto'], labels: ASSIST_LABELS, onChange: (v) => saveTier({ assist: v }) }),
+          h(Options, { value: view.assist, options: ['off', 'auto'], labels: ASSIST_LABELS, onChange: (v) => save({ assist: v }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('补充程度','Detail')),
-          h(Options, { value: eff.detail, options: ['minimal', 'standard', 'detailed'], labels: DETAIL_LABELS, onChange: (v) => saveTier({ detail: v }) }),
+          h(Options, { value: view.detail, options: ['minimal', 'standard', 'detailed'], labels: DETAIL_LABELS, onChange: (v) => save({ detail: v }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('自主预算','Autonomy')),
-          h(Options, { value: eff.budget, options: ['minimal', 'standard', 'generous'], labels: BUDGET_LABELS, onChange: (v) => saveTier({ budget: v }) }),
+          h(Options, { value: view.budget, options: ['minimal', 'standard', 'generous'], labels: BUDGET_LABELS, onChange: (v) => save({ budget: v }) }),
         ),
         h('div', { style: S.row },
           h('span', { style: S.label }, L('解释层模型','Explainer model')),
           h(Options, {
-            value: s.model ? modelKey(s.model) : 'inherit',
+            value: view.model ? modelKey(view.model) : 'inherit',
             options: ['inherit', ...routes.map(modelKey)], labels: modelLabels,
             onChange: (v) => { const r = routes.find((x) => modelKey(x) === v); save({ model: r ? { provider: r.provider, model: r.model } : null }) },
           }),
@@ -905,7 +927,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
         (catalog.problems || []).length ? h('div', { style: S.muted }, L('部分模型不可用：','Some models unavailable: ') + catalog.problems.join('；')) : null,
         busy ? h('div', { style: S.muted }, L('保存中…','Saving…')) : null,
         msg ? h('div', { 'data-po06': 'msg', style: { ...S.muted, color: msg.kind === 'err' ? T('err') : (msg.kind === 'warn' ? T('warn') : T('ok')) } }, msg.text) : null,
-        h('div', { style: S.muted }, L('改动下一轮生效；改提示词会让意图包缓存自动失效重算。','Changes take effect next round; editing the prompt invalidates the cached packet.')),
+        h('div', { style: S.muted }, L('会话范围的改动只作用于当前 session；全局默认不会覆盖已有会话覆盖。','Session-scoped changes affect only this session; global defaults do not overwrite existing session overrides.')),
       )
     }
 
