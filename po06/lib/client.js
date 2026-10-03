@@ -362,16 +362,20 @@ window.__ModuleLoader__.load({
       // 只允许“最新一次请求”落状态。旧实现每轮只取消最后一个 alive 标志：
       // A→B 切会话时更早的 A 请求仍可能晚到并覆盖 B，正是配置看起来来回跳的来源之一。
       const seqRef = React.useRef(0)
+      const fnRef = React.useRef(fn)
+      fnRef.current = fn
       const tick = React.useCallback(() => {
+        // 旧 session render 留下的 tick 即使被旧保存 Promise 再次调用，也不得复活。
+        if (fnRef.current !== fn) return Promise.resolve(null)
         const seq = ++seqRef.current
         setState((x) => ({ loading: true, data: x.data, error: null }))
         return fn().then(
           (data) => {
-            if (seq === seqRef.current) setState({ loading: false, data, error: null })
+            if (fnRef.current === fn && seq === seqRef.current) setState({ loading: false, data, error: null })
             return data
           },
           (e) => {
-            if (seq === seqRef.current) {
+            if (fnRef.current === fn && seq === seqRef.current) {
               setState((x) => ({ loading: false, data: x.data, error: String((e && e.message) || e) }))
             }
             return null
@@ -409,16 +413,19 @@ window.__ModuleLoader__.load({
     function useOnce(fn) {
       const [state, setState] = React.useState({ loading: true, data: null, error: null })
       const seqRef = React.useRef(0)
+      const fnRef = React.useRef(fn)
+      fnRef.current = fn
       const run = React.useCallback(() => {
+        if (fnRef.current !== fn) return Promise.resolve(null)
         const seq = ++seqRef.current
         setState((x) => ({ loading: true, data: x.data, error: null }))
         return fn().then(
           (data) => {
-            if (seq === seqRef.current) setState({ loading: false, data, error: null })
+            if (fnRef.current === fn && seq === seqRef.current) setState({ loading: false, data, error: null })
             return data
           },
           (e) => {
-            if (seq === seqRef.current) setState({ loading: false, data: null, error: e })
+            if (fnRef.current === fn && seq === seqRef.current) setState({ loading: false, data: null, error: e })
             return null
           },
         )
@@ -879,6 +886,9 @@ window.__ModuleLoader__.load({
       const s = (status && status.settings) || {}
       const eff = (status && status.sessionEffective) || s
       const editingSession = scope === 'session' && !!sessionId
+      const saveViewKey = String(sessionId || '') + '|' + scope
+      const saveViewKeyRef = React.useRef(saveViewKey)
+      saveViewKeyRef.current = saveViewKey
       const view = editingSession ? eff : s
       const [catalog, setCatalog] = React.useState({ models: [], problems: [] })
       React.useEffect(() => {
@@ -895,8 +905,10 @@ window.__ModuleLoader__.load({
       routes.forEach((r) => { modelLabels[modelKey(r)] = r.label })
 
       const saveRequest = async (path, body) => {
+        const requestViewKey = saveViewKey
         setBusy(true); setMsg(null)
         const r = await apiPost(path, body)
+        if (saveViewKeyRef.current !== requestViewKey) return !!(r && r.ok === true)
         setBusy(false)
         if (!r || r.ok !== true) {
           setMsg({ kind: 'err', text: L('保存失败：','Save failed: ') + reasonText(r && r.reason) })
@@ -2018,6 +2030,9 @@ window.__ModuleLoader__.load({
 
       // UI 编辑范围：默认编辑当前会话；显式切到“全局默认”时才改顶层设置。
       const editingSession = configScope === 'session' && !!sessionId
+      const saveViewKey = String(sessionId || '') + '|' + configScope
+      const saveViewKeyRef = React.useRef(saveViewKey)
+      saveViewKeyRef.current = saveViewKey
       const edit = editingSession ? eff : s
       const editD = editingSession ? effD : d
       const editTier = (editD && typeof editD.tier === 'string') ? editD.tier : tierOfSettings(edit)
@@ -2043,8 +2058,10 @@ window.__ModuleLoader__.load({
       const bashOn = bashKnown ? !!s.bash : true
 
       const saveRequest = async (path, body) => {
+        const requestViewKey = saveViewKey
         setBusy(true); setMsg(null)
         const r = await apiPost(path, body)
+        if (saveViewKeyRef.current !== requestViewKey) return !!(r && r.ok === true)
         setBusy(false)
         if (!r || r.ok !== true) {
           setMsg({ kind: 'err', text: L('保存失败：', 'Save failed: ') + reasonText(r && r.reason) })
