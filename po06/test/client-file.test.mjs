@@ -130,8 +130,11 @@ t('会话轮询：切 session 后旧响应不得覆盖新会话，加载期不�
   ok(a >= 0 && b > a, '要能定位 usePoll')
   const block = src.slice(a, b)
   ok(/const seqRef = React\.useRef\(0\)/.test(block), 'usePoll 必须有请求世代号')
+  ok(/const fnRef = React\.useRef\(fn\)/.test(block) && /fnRef\.current = fn/.test(block),
+    'usePoll 必须同时记录当前 session 对应的请求函数')
+  ok(/fnRef\.current !== fn/.test(block), '旧 session 留下的 tick 被再次调用时必须直接 no-op')
   ok(/const seq = \+\+seqRef\.current/.test(block), '每次请求必须拿唯一世代')
-  ok(/seq === seqRef\.current/.test(block), '只有最新请求可以落状态')
+  ok(/fnRef\.current === fn && seq === seqRef\.current/.test(block), '只有当前 session 的最新请求可以落状态')
   ok(/setState\(\{ loading: true, data: null, error: null \}\)/.test(block),
     'session/fn 变化时必须清掉上一会话 data，不能拿旧值冒充当前值')
   ok(/window\.clearInterval\(t\); seqRef\.current \+= 1/.test(block),
@@ -139,8 +142,11 @@ t('会话轮询：切 session 后旧响应不得覆盖新会话，加载期不�
   const onceA = src.indexOf('function useOnce(fn)')
   const onceB = src.indexOf('// ── 浮层层级', onceA)
   const once = src.slice(onceA, onceB)
-  ok(/const seqRef = React\.useRef\(0\)/.test(once) && /seq === seqRef\.current/.test(once),
-    'useOnce 也必须防旧 Promise 在新 effect 中复活')
+  ok(/const seqRef = React\.useRef\(0\)/.test(once) && /fnRef\.current === fn && seq === seqRef\.current/.test(once),
+    'useOnce 也必须同时校验函数身份与请求世代，防旧 Promise 在新 effect 中复活')
+  ok(/const saveViewKey = String\(sessionId \|\| ''\) \+ '\\|'/.test(src)
+    && /saveViewKeyRef\.current !== requestViewKey/.test(src),
+    '旧会话的保存 Promise 完成后不得刷新/提示到新会话')
 })
 
 t('界面锚点：关键节点带 data-po06 标记（真机验证靠它，不靠"应该会出现"）', () => {
