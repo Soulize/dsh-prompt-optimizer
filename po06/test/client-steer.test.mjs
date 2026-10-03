@@ -55,13 +55,37 @@ test('Ctrl/Cmd+Enter 使用 DSH 官方互补 Queue/Steer 语义', () => {
   assert.equal(d.keyDeliveryMode(idlePrimary, steer, queue, true), 'queue', '非运行态 accelerated 仍是 queue')
 })
 
-test('steer 放行必须走 DSH 原生按钮，而不是公开 inputActions.submit(queue)', () => {
+test('accelerated steer 可重放 DSH 原生 Ctrl+Enter', () => {
+  const OldKeyboardEvent = globalThis.KeyboardEvent
+  let seen = null
+  globalThis.KeyboardEvent = class {
+    constructor(type, init) { this.type = type; Object.assign(this, init) }
+  }
+  try {
+    const d = load()
+    const editor = { dispatchEvent: (e) => { seen = e; return false } }
+    const card = { querySelector: () => editor }
+    assert.equal(d.dispatchAcceleratedSubmit(card), true)
+    assert.equal(seen.type, 'keydown')
+    assert.equal(seen.key, 'Enter')
+    assert.equal(seen.ctrlKey, true)
+    assert.equal(seen.bubbles, true)
+  } finally {
+    if (OldKeyboardEvent === undefined) delete globalThis.KeyboardEvent
+    else globalThis.KeyboardEvent = OldKeyboardEvent
+  }
+})
+
+test('steer 放行覆盖主按钮 Steer、互补 Steer 与运行结束三条路径', () => {
   assert.match(source, /deliveryMode === 'steer'/)
   assert.match(source, /currentSteerButton\(card\)/)
+  assert.match(source, /currentQueueButton\(card\)/)
   assert.match(source, /nativeReleaseBypass\.current \+= 1/)
-  assert.match(source, /btn\.click\(\)/)
-  assert.match(source, /inputActions\.submit\(\)/)
-  const steerBlock = source.slice(source.indexOf("if (deliveryMode === 'steer')"), source.indexOf("setHold({ ...(h || {}), phase:", source.indexOf("if (deliveryMode === 'steer')")))
-  assert.ok(steerBlock.indexOf('btn.click()') >= 0, 'steer block must call native DSH button')
-  assert.ok(steerBlock.indexOf('inputActions.submit()') >= 0, 'queue fallback remains when the running turn already ended')
+  const start = source.indexOf("if (deliveryMode === 'steer')")
+  const end = source.indexOf("setHold({ ...(h || {}), phase:", start)
+  const steerBlock = source.slice(start, end)
+  assert.ok(steerBlock.includes('steerBtn.click()'), '主按钮就是 Steer 时必须点击 DSH 原生 Steer')
+  assert.ok(steerBlock.includes('dispatchAcceleratedSubmit(card)'), '主按钮是 Queue 时必须重放互补 Ctrl+Enter')
+  assert.ok(steerBlock.includes('inputActions.submit()'), '运行已结束时保留普通 queue fallback')
+  assert.match(source, /markSeen\('key:native-release'\)/, '合成 Ctrl+Enter 必须一次性绕过插件自身拦截')
 })
