@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/steer-gate-session-config]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: |
+          node --check po06/lib/settings.js
+          node --check po06/lib/policy.js
+          node --check po06/lib/control-api.js
+          node --check po06/lib/index.js
+          node --check po06/lib/client.js
+      - name: Core tests
+        run: |
+          node --test             po06/test/settings.test.mjs             po06/test/policy.test.mjs             po06/test/rollout.test.mjs             po06/test/assembly-gate.test.mjs             po06/test/client-hold-bridge.test.mjs
