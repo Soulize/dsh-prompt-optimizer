@@ -3,8 +3,6 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [fix/steer-gate-session-config]
   workflow_dispatch:
 
 jobs:
@@ -20,3 +18,14 @@ jobs:
         run: find po06/lib -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Full po06 test suite
         run: node --test po06/test/*.test.mjs
+      - name: Pack installable plugin
+        run: |
+          mkdir -p dist
+          cd po06
+          npm pack --ignore-scripts --pack-destination ../dist
+      - name: Upload installable plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-prompt-optimizer-0.8.2-soulize.1
+          path: dist/*.tgz
+          if-no-files-found: error
