@@ -27,6 +27,18 @@ test('首装自动创建 enabled:true + rollout:all，无需手改 JSON', () => 
   assert.deepEqual(j.rollout, { mode: 'all' })
 })
 
+
+test('缺失/畸形 gate 会自动修复成可用默认', () => {
+  const path = tempConfig()
+  writeFileSync(path, JSON.stringify({ settingsVersion: 1, enabled: 'true', rollout: {} }))
+  const r = ensureSettingsFile({ path, now: 3 })
+  assert.equal(r.ok, true)
+  assert.equal(r.changed, true)
+  const j = JSON.parse(readFileSync(path, 'utf8'))
+  assert.equal(j.enabled, true)
+  assert.deepEqual(j.rollout, { mode: 'all' })
+})
+
 test('已有显式 gate 决策不会被首装修复逻辑翻转', () => {
   const path = tempConfig()
   writeFileSync(path, JSON.stringify({ settingsVersion: 1, enabled: false, rollout: { mode: 'allowlist', sessions: ['s-a'] } }))
