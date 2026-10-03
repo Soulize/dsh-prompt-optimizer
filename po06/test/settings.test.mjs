@@ -186,10 +186,9 @@ t('describeSettings：给界面的是**行为描述**，不是内部枚举值', 
 })
 
 
-// ── ③b issue #16：写档位**必须**同步"启用意图"，否则面板永远开不了插件 ────────
-// 报告者实测（0.7.6，只动面板）：`/status` 恒 `enabled:false / rollout:"off" / rolloutDefaulted:true`，
-// 台账 43 条 `reason:"gate-disabled" / gate:"rollout-off"`、成功包 0 条 —— 因为**全包没有任何代码**
-// 会写 `enabled:true`（`GATE_KEYS` 只是"原样保留"）。下面把四条边界都钉住。
+// ── ③b gate 与档位解耦 ────────────────────────────────────────────────
+// po06.json 首装时由 ensureSettingsFile / writeSettings 补 enabled:true + rollout:all。
+// tier 只描述“这个作用域要不要优化”，不再顺手改插件总 gate；否则一个 session 关档会杀掉其它 session。
 t('写档位 ⇒ 自动补 enabled:true / rollout:all（全新安装的"面板拨档位"路径）', () => {
   const dir = tmp(); const p = join(dir, 'po06.json')
   // 全新安装：文件里**没有** enabled/rollout（这正是报告者的现场）
@@ -202,23 +201,24 @@ t('写档位 ⇒ 自动补 enabled:true / rollout:all（全新安装的"面板�
   eq(now.settingsVersion, 1, '0.6 自己的配置标记仍在')
 })
 
-t('档位="关闭" ⇒ 显式写 enabled:false + rollout:{mode:off}（理由码是用户的选择）', () => {
+t('档位="关闭" 只关闭优化策略，不得关闭插件总 gate', () => {
   const dir = tmp(); const p = join(dir, 'po06.json')
   writeFileSync(p, JSON.stringify({ settingsVersion: 1, enabled: true, rollout: { mode: 'all' } }), 'utf8')
   const r = writeSettings({ path: p, patch: { tier: 'off' }, now: 22 })
   eq(r.ok, true, '写入成功')
   const now = JSON.parse(readFileSync(p, 'utf8'))
-  eq(now.enabled, false, '关档要真的关')
-  eq(now.rollout && now.rollout.mode, 'off', '写显式 off（不是回落来的 off）')
+  eq(now.enabled, true, 'tier off 不得把总 gate 关掉')
+  eq(now.rollout && now.rollout.mode, 'all', 'rollout 保持全量启用')
+  eq(now.assist, 'off', '关闭语义落在策略本身')
 })
 
-t('灰度名单不许被档位写入动到（只补 enabled，名单原样）', () => {
+t('已有显式 gate/灰度名单不许被档位写入动到', () => {
   const dir = tmp(); const p = join(dir, 'po06.json')
   writeFileSync(p, JSON.stringify({ settingsVersion: 1, enabled: false, rollout: { mode: 'allowlist', sessions: ['s-1'] } }), 'utf8')
   const r = writeSettings({ path: p, patch: { tier: 'light' }, now: 23 })
   eq(r.ok, true, '写入成功')
   const now = JSON.parse(readFileSync(p, 'utf8'))
-  eq(now.enabled, true, '用户拨了非关闭档 ⇒ 应当启用')
+  eq(now.enabled, false, '显式总 gate 决策必须保留')
   eq(now.rollout && now.rollout.mode, 'allowlist', '**不得**把灰度名单改成 all')
   eq(JSON.stringify(now.rollout.sessions), JSON.stringify(['s-1']), '名单内容也不许动')
 })
