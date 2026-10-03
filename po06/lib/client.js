@@ -390,11 +390,11 @@ window.__ModuleLoader__.load({
       return [state, tick]
     }
 
-    // ⚠ 0.7.7：带上 session —— 档位改成会话级后，界面必须读【本会话生效的档位】，
-//   而不是全局那个（否则 A 会话设成关闭、B 会话的界面也跟着显示关闭）。
-const useStatus = (sessionId) => usePoll(React.useCallback(
-  () => apiGet('/status' + (sessionId ? ('?session=' + encodeURIComponent(sessionId)) : '')),
-  [sessionId]), 15000)
+    // 带上 session：界面读取【本会话生效配置】，而不是全局设置。
+    // usePoll 自身会在 sessionId 变化时清空旧 data 并废弃所有旧请求。
+    const useStatus = (sessionId) => usePoll(React.useCallback(
+      () => apiGet('/status' + (sessionId ? ('?session=' + encodeURIComponent(sessionId)) : '')),
+      [sessionId]), 15000)
     const useTurns = (n) => usePoll(React.useCallback(() => apiGet('/turns?limit=' + n), [n]), 15000)
     const useState_ = (sid) => usePoll(
       React.useCallback(() => (sid ? apiGet('/state?session=' + encodeURIComponent(sid)) : Promise.resolve(null)), [sid]),
@@ -1832,13 +1832,6 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
       return label && steerLabels && steerLabels.has(label) ? 'steer' : 'queue'
     }
-    const currentSendMode = (card, steerLabels) => {
-      const buttons = composerButtons(card)
-      for (const btn of buttons) {
-        if (sendModeForButton(btn, steerLabels) === 'steer' && !btn.disabled) return 'steer'
-      }
-      return 'queue'
-    }
     const keyDeliveryMode = (card, steerLabels, queueLabels, accelerated) => {
       const buttons = composerButtons(card).filter((btn) => !btn.disabled)
       const hasSteer = buttons.some((btn) => {
@@ -1883,7 +1876,6 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       return String(raw).replace(/\u00a0/g, ' ')
     }
     const composerButtons = (card) => (card ? Array.from(card.querySelectorAll('button')) : [])
-    const lastComposerButton = (card) => { const l = composerButtons(card); return l.length ? l[l.length - 1] : null }
     /**
      * 这次按键/点击是不是发生在**输入卡片里**。
      * 判据优先看**事件目标**（`target`）——它才是"这一次击键真正发生在哪"；
@@ -3622,7 +3614,7 @@ const react = require("react")
         composerRegion, clampOvPos, clampOvSize, defaultOvPos, defaultBallPos,
         ovReflowWatch, ovReflowAll, EDITABLE_SEL,
         holdBridgeRead, holdBridgeWrite, holdBridgeOn,
-        sendModeForButton, currentSendMode, keyDeliveryMode, steerLabelsNow, queueLabelsNow,
+        sendModeForButton, keyDeliveryMode, steerLabelsNow, queueLabelsNow,
         themeTokens: THEME_TOKENS,
         tokenVars: TOKEN_VARS,
         themeIsDark,
