@@ -650,12 +650,12 @@ t('虚拟 POSIX 卡片：注册了 keyed 视图，带专属图标与徽标，且
   const cell = calls.filter((c) => c.def && c.def.name === 'tool.call.toolview')[0]
   ok(cell, '必须注册 tool.call.toolview')
   eq(typeof cell.Comp, 'function', '要带组件')
-  const src = readFileSync('C:/Users/WestFox/.dsh/plugins/dsh-prompt-optimizer/po06/lib/client.js', 'utf8')
-  ok(/\$_\s*'/.test(src) || src.includes("'$_'"), "专属图标要用 '$_'（一眼可辨的 shell 提示符）")
-  ok(/虚拟/.test(src) && /Virtual/.test(src), '要有「虚拟 / Virtual」徽标（中英都要）')
-  ok(/posix-tool/.test(src), '要带 data-po06=posix-tool 锚点（真机可核对渲染）')
-  ok(/不经过 PowerShell|纯 JS/.test(src), '要说明它是插件内执行、不经过 PowerShell')
-  ok(/posixCommandOf/.test(src) && /posixOutputOf/.test(src), '命令与输出要有取数函数（字段缺失要能兜住）')
+  const clientSource = src
+  ok(/\$_\s*'/.test(clientSource) || clientSource.includes("'$_'"), "专属图标要用 '$_'（一眼可辨的 shell 提示符）")
+  ok(/虚拟/.test(clientSource) && /Virtual/.test(clientSource), '要有「虚拟 / Virtual」徽标（中英都要）')
+  ok(/posix-tool/.test(clientSource), '要带 data-po06=posix-tool 锚点（真机可核对渲染）')
+  ok(/不经过 PowerShell|纯 JS/.test(clientSource), '要说明它是插件内执行、不经过 PowerShell')
+  ok(/posixCommandOf/.test(clientSource) && /posixOutputOf/.test(clientSource), '命令与输出要有取数函数（字段缺失要能兜住）')
 })
 
 // ── ③ 语言：只来自 DSH 的 locale 服务，且**切了就换**（2026-09-22 用户要求 + 一次真机缺陷）──
