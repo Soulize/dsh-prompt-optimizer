@@ -25,4 +25,6 @@ jobs:
           node --check po06/lib/client.js
       - name: Core tests
         run: |
-          node --test             po06/test/settings.test.mjs             po06/test/policy.test.mjs             po06/test/rollout.test.mjs             po06/test/assembly-gate.test.mjs             po06/test/client-hold-bridge.test.mjs
+          node --test             po06/test/settings.test.mjs             po06/test/policy.test.mjs             po06/test/rollout.test.mjs             po06/test/assembly-gate.test.mjs             po06/test/client-hold-bridge.test.mjs \
+            po06/test/session-config.test.mjs \
+            po06/test/client-steer.test.mjs
