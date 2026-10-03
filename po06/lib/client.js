@@ -359,18 +359,33 @@ window.__ModuleLoader__.load({
     // ── 小状态钩子（轮询，不引入任何依赖）────────────────────────────
     function usePoll(fn, ms) {
       const [state, setState] = React.useState({ loading: true, data: null, error: null })
+      // 只允许“最新一次请求”落状态。旧实现每轮只取消最后一个 alive 标志：
+      // A→B 切会话时更早的 A 请求仍可能晚到并覆盖 B，正是配置看起来来回跳的来源之一。
+      const seqRef = React.useRef(0)
       const tick = React.useCallback(() => {
-        let alive = true
-        fn().then(
-          (data) => { if (alive) setState({ loading: false, data, error: null }) },
-          (e) => { if (alive) setState((s) => ({ loading: false, data: s.data, error: String((e && e.message) || e) })) },
+        const seq = ++seqRef.current
+        setState((x) => ({ loading: true, data: x.data, error: null }))
+        return fn().then(
+          (data) => {
+            if (seq === seqRef.current) setState({ loading: false, data, error: null })
+            return data
+          },
+          (e) => {
+            if (seq === seqRef.current) {
+              setState((x) => ({ loading: false, data: x.data, error: String((e && e.message) || e) }))
+            }
+            return null
+          },
         )
-        return () => { alive = false }
       }, [fn])
       React.useEffect(() => {
-        let cancel = tick()
-        const t = window.setInterval(() => { cancel = tick() }, ms)
-        return () => { window.clearInterval(t); if (typeof cancel === 'function') cancel() }
+        // fn 变化通常就是 sessionId 变化：先使旧请求全部失效，并清掉旧会话 data，
+        // 绝不在新会话加载期间拿旧值冒充当前值。
+        seqRef.current += 1
+        setState({ loading: true, data: null, error: null })
+        void tick()
+        const t = window.setInterval(() => { void tick() }, ms)
+        return () => { window.clearInterval(t); seqRef.current += 1 }
       }, [tick, ms])
       return [state, tick]
     }
@@ -393,15 +408,26 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
      */
     function useOnce(fn) {
       const [state, setState] = React.useState({ loading: true, data: null, error: null })
-      const live = React.useRef(true)
+      const seqRef = React.useRef(0)
       const run = React.useCallback(() => {
+        const seq = ++seqRef.current
         setState((x) => ({ loading: true, data: x.data, error: null }))
-        fn().then(
-          (data) => { if (live.current) setState({ loading: false, data, error: null }) },
-          (e) => { if (live.current) setState({ loading: false, data: null, error: e }) },
+        return fn().then(
+          (data) => {
+            if (seq === seqRef.current) setState({ loading: false, data, error: null })
+            return data
+          },
+          (e) => {
+            if (seq === seqRef.current) setState({ loading: false, data: null, error: e })
+            return null
+          },
         )
       }, [fn])
-      React.useEffect(() => { live.current = true; run(); return () => { live.current = false } }, [run])
+      React.useEffect(() => {
+        seqRef.current += 1
+        void run()
+        return () => { seqRef.current += 1 }
+      }, [run])
       return [state, run]
     }
 
