@@ -123,6 +123,26 @@ t('写操作必须带 x-po06 头（否则被控制 API 的信任判据 403）', 
   ok(/WRITE_HEADERS/.test(posts[0]), 'POST 必须带 WRITE_HEADERS')
 })
 
+
+t('会话轮询：切 session 后旧响应不得覆盖新会话，加载期不得沿用旧 data', () => {
+  const a = src.indexOf('function usePoll(fn, ms)')
+  const b = src.indexOf('const useStatus =', a)
+  ok(a >= 0 && b > a, '要能定位 usePoll')
+  const block = src.slice(a, b)
+  ok(/const seqRef = React\.useRef\(0\)/.test(block), 'usePoll 必须有请求世代号')
+  ok(/const seq = \+\+seqRef\.current/.test(block), '每次请求必须拿唯一世代')
+  ok(/seq === seqRef\.current/.test(block), '只有最新请求可以落状态')
+  ok(/setState\(\{ loading: true, data: null, error: null \}\)/.test(block),
+    'session/fn 变化时必须清掉上一会话 data，不能拿旧值冒充当前值')
+  ok(/window\.clearInterval\(t\); seqRef\.current \+= 1/.test(block),
+    '卸载/切会话时必须一次性使所有旧请求失效')
+  const onceA = src.indexOf('function useOnce(fn)')
+  const onceB = src.indexOf('// ── 浮层层级', onceA)
+  const once = src.slice(onceA, onceB)
+  ok(/const seqRef = React\.useRef\(0\)/.test(once) && /seq === seqRef\.current/.test(once),
+    'useOnce 也必须防旧 Promise 在新 effect 中复活')
+})
+
 t('界面锚点：关键节点带 data-po06 标记（真机验证靠它，不靠"应该会出现"）', () => {
   // P10：`dock`（小胶囊）已被控件栏替换 ⇒ 换成 `bar`，并钉住一排控件的标记
   // 要求②（2026-09-21）：`?` 帮助按钮与弹层也要有锚点（help-btn / help-pop / help-body / help-close）
