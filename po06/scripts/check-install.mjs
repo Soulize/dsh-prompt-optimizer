@@ -54,14 +54,24 @@ if (!existsSync(profileDir)) {
   say('- ✅ profile 目录存在')
   const pkgJson = join(profileDir, 'package.json')
   let listed = false
+  let profileBundles = null
   if (existsSync(pkgJson)) {
     try {
       const p = JSON.parse(readFileSync(pkgJson, 'utf8'))
       listed = Boolean((p.dependencies || {})[PKG_NAME])
+      const b = p && p.dsh && p.dsh.profile && p.dsh.profile.bundles
+      if (Array.isArray(b)) profileBundles = b.map(String)
     } catch { /* 坏 JSON 下面按未列出处理 */ }
   }
   say('- ' + (listed ? '✅' : '⚠') + ' profile 的 dependencies ' + (listed ? '里有' : '里**没有**') + ' `' + PKG_NAME + '`')
   if (!listed) warnings.push('profile 的 package.json 里没列出该包（可能是别的方式挂上的，但值得看一眼）')
+  if (profileBundles !== null) {
+    const bundled = profileBundles.includes(PKG_NAME)
+    say('- ' + (bundled ? '✅' : '❌') + ' profile 的 dsh.profile.bundles ' + (bundled ? '里有' : '里**没有**') + ' `' + PKG_NAME + '`')
+    if (!bundled) problems.push('profile 的 dsh.profile.bundles 里没有该包 ⇒ 依赖装上了也不会被装配')
+  } else {
+    warnings.push('profile 没有可读的 dsh.profile.bundles；将继续用 --dump-config 做装配层核对')
+  }
 }
 
 // ── ② 装出来的那一份**是不是这一份**（逐文件比 hash，不靠标记串）────────
