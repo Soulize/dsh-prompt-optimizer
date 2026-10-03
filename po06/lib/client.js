@@ -1953,22 +1953,7 @@ const useStatus = (sessionId) => usePoll(React.useCallback(
       const bashKnown = !!data
       const bashOn = bashKnown ? !!s.bash : true
 
-      const save = async (patch) => {
-        setBusy(true); setMsg(null)
-        const r = await apiPost('/settings', patch)      // apiPost 保证不抛：网络失败也是 {ok:false,reason}
-        setBusy(false)
-        if (!r || r.ok !== true) {
-          setMsg({ kind: 'err', text: L('保存失败：', 'Save failed: ') + reasonText(r && r.reason) })
-          setFailTick((t) => t + 1)                     // 让乐观显示的控件退回真值
-          refreshStatus()
-          return
-        }
-        const probs = (r.problems || []).filter((x) => x.kind !== 'unknown-field')
-        setMsg(probs.length
-          ? { kind: 'warn', text: L('已保存，但有 ' + probs.length + ' 项被按默认处理', 'Saved, but ' + probs.length + ' value(s) fell back to defaults') + staleSchemaHint(r.problems) }
-          : { kind: 'ok', text: L('已保存', 'Saved') })
-        refreshStatus()                                 // 成功后重新拉一次，界面与后端一致
-            const saveRequest = async (path, body) => {
+      const saveRequest = async (path, body) => {
         setBusy(true); setMsg(null)
         const r = await apiPost(path, body)
         setBusy(false)
