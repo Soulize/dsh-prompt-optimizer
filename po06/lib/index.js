@@ -549,9 +549,13 @@ function toolPresentInTable(tools, name) {
  * 幂等：只做差额，所以设置每次写盘都可以直接调它。
  * @returns {{ok:boolean, on:boolean, changed:boolean, reason?:string}}
  */
+export function shouldProvideBuiltInBash({ platform = process.platform, enabled = true } = {}) {
+  return enabled !== false && platform === 'win32'
+}
+
 export function syncBashTool(ctx) {
-  let want = true
-  try { want = readPolicy({ home: DSH_HOME }).bash !== false } catch { want = true }
+  let configured = true
+  try { configured = readPolicy({ home: DSH_HOME }).bash !== false } catch { configured = true }
   // ⚠ 2026-09-26：**让位判据**（用户反馈：Linux 用户关了内置 bash 后什么都没有）。
   //
   // 背景：宿主的 @deepseek-ai/dsh-tool-bash 也注册名为 bash 的工具，而它在
@@ -564,8 +568,7 @@ export function syncBashTool(ctx) {
   //
   // 为什么用**平台**而不是"查表里有没有 bash"：表里只看得到名字，分不清那份是谁注册的；
   // 若用"查表"，po06 自己刚注册完再查就会把自己认成宿主，判据失明。平台是静态事实，不依赖时序。
-  const hostProvidesBash = process.platform !== 'win32'
-  if (hostProvidesBash) want = false
+  const want = shouldProvideBuiltInBash({ platform: process.platform, enabled: configured })
   const hostCtx = ctx || hostCtxForBashSync
   const scope = bashToolScope
   const tools = (scope && scope.tools) ? scope.tools
