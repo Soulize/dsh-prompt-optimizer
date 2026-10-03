@@ -78,6 +78,20 @@ test('bySession 支持完整会话配置，B 会话不继承 A 的覆盖', () =>
   assert.deepEqual(b.model, { provider: 'global', model: 'default' })
 })
 
+
+test('会话档位作为 preset 基底，后续显式微调必须压过 preset', () => {
+  const path = tempConfig()
+  ensureSettingsFile({ path, now: 8 })
+  writeSessionSettings({ path, sessionId: 'A', patch: { tier: 'heavy' }, now: 9 })
+  let j = JSON.parse(readFileSync(path, 'utf8'))
+  assert.equal(effectiveSettings(j, 'A').detail, 'detailed')
+  writeSessionSettings({ path, sessionId: 'A', patch: { detail: 'minimal' }, now: 10 })
+  j = JSON.parse(readFileSync(path, 'utf8'))
+  assert.equal(j.bySession.A.tier, 'heavy', '档位意图仍保留')
+  assert.equal(j.bySession.A.detail, 'minimal', '显式微调单独存为覆盖')
+  assert.equal(effectiveSettings(j, 'A').detail, 'minimal', '显式微调必须压过 heavy preset')
+})
+
 test('服务端按 session 原子合并：A/B 交替写 20 次不覆盖彼此', () => {
   const path = tempConfig()
   ensureSettingsFile({ path, now: 10 })
