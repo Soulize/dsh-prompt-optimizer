@@ -418,6 +418,9 @@ await ta('A15：闸门未放行时，pre-step fail-open 且绝不调用优化模
   const ctx = fakeCtx({ llm })
   mod.apply(ctx, {})
   const sid = 'session-a15-gated'
+  // 首装 gate 现在按产品要求默认 enabled:true + rollout:all；
+  // 因此本用例必须**显式**制造“未放行”状态，不能再把“未设置”当 disabled。
+  mod.adapter.enableGate.set(sid, { enabled: false, code: 'test-forced-disabled', reason: '单测拒绝' })
   const sess = fakeSession(sid, ctx.projections)
   const result = await enterStep(ctx, sess, userEvent(USER_TEXT, 'm-gate'))
   eq(result.kind, 'enter', '插件未启用时原消息继续')
