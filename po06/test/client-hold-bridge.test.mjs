@@ -22,8 +22,10 @@ test('Host pre-step 状态按 sessionId 查询，不会把 A 会话状态串给 
 })
 
 test('切会话不会 abort 优化：取消只通过显式 Host decision', () => {
+  // 顾问进度轮询仍可独立使用 AbortController；这里禁的是旧提示词拦截自己的 abortRef/世代取消链。
   assert.equal(client.includes('abortRef'), false)
-  assert.equal(client.includes('AbortController'), false)
+  assert.equal(client.includes('holdSeq'), false)
+  assert.equal(client.includes("apiPost('/interpret'"), false)
   assert.match(client, /hostDecision\('cancel'\)/)
   assert.match(client, /hostDecision\('skip'\)/)
   assert.match(client, /hostDecision\('original'\)/)
