@@ -543,19 +543,10 @@ t('顾问卡片页脚：拿到原始 usage 时必须渲染出数字', () => {
   ok(!shown.includes('Σ — tok'),'不能再是空账')
 })
 
-t('斜杠放行判定：只认名单内且已注册的命令，且不误配前缀', () => {
-  const {mod}=loadClientModule()
-  const f=mod.__debug.slashReviewAllowed
-  ok(typeof f==='function','判定必须是可测的纯函数')
-  eq(f(['vmake'],'/vmake 做个视频'),true,'名单内命令放行')
-  eq(f(['vmake'],'/VMAKE x'),true,'大小写不敏感')
-  eq(f(['vmake'],'/vmake'),true,'只有命令名本身也放行')
-  eq(f(['vmake'],'/vmakefoo x'),false,'前缀相同但不是同一命令 ⇒ 不放行')
-  eq(f(['vmake'],'/clear'),false,'官方命令不在名单内 ⇒ 不放行')
-  eq(f(['vmake'],'/other x'),false,'不在名单内 ⇒ 不放行（未注册的命令不会进 active）')
-  eq(f([],'/vmake x'),false,'空名单 == 旧行为：全部交还宿主')
-  eq(f(null,'/vmake x'),false,'拿不到清单时同样不放行（fail-closed）')
-  eq(f(['vmake'],'普通消息'),false,'非斜杠消息不适用')
+t('斜杠命令不再由客户端提交层拦截，交还 DSH 命令系统', () => {
+  ok(!/slashReviewAllowed/.test(src), '客户端不再维护斜杠命令拦截白名单')
+  ok(!/draftNow\(\)/.test(src), '客户端不再读取草稿来判断斜杠命令')
+  ok(!/slashActive/.test(src), '客户端不再从 /status 构造命令拦截集合')
 })
 
 t('专项卡片：范围、对象、过期覆盖与未覆盖检查点可见', () => {
