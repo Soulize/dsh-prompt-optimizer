@@ -37,8 +37,7 @@ import { TOOLS_SYSTEM_NOTE } from './read-tools.js'
 import { drain } from './eval-llm.js'
 import { createStateStore, inheritStateForFork } from './store.js'
 import {
-  isRealUserInput, extractUserText, extractMessageId, extractObservedModel,
-  resolveInterpreterCfg, decideInterpret, resolveProfileName,
+  extractObservedModel, resolveInterpreterCfg, decideInterpret, resolveProfileName,
 } from './wire.js'
 import { verifyHtmlFile } from './verifier-html.js'
 import { loadLlmLib } from './llm-lib.js'
@@ -58,6 +57,7 @@ import { strategyInstructions } from './strategy.js'
 // 运行时随包分发在 `<plugin>/runtime/`。装配即提供；详情里的开关决定是否注册给模型。
 import { apply as applyBashTool } from './bash/index.js'
 import { runPosix, SUPPORTED_COMMANDS, SUPPORTED_OPERATORS } from './posix.js'
+import { createPreStepInterceptController } from './pre-step-intercept.js'
 import { registerControlApi, resolvePrompt } from './control-api.js'
 // 手动结案（用户 2026-09-21 拍板 A 案）后要**立刻重编译并写回动态上下文**：
 // 不重编译的话，包里还是旧的那一份，用户会以为"点了没用"。
@@ -221,20 +221,7 @@ function ownModelFor(sessionId) {
 }
 
 // ── 定点核对用的出口（P11）在文件末尾（`export const __test`）────────────
-// ⚠ 不能放在这里：它引用的 `interceptedText` / 进度表都是 `const`，此刻还在 TDZ 里。
-
-/**
- * 还没解释的用户输入（每会话一条）。
- *
- * 为什么需要：宿主总是**先**发用户消息、**后**发 `request/header`，
- * 所以新会话的第一条消息在到达时还不知道该用哪个模型。旧行为是直接放弃这一轮；
- * 现在改成"记下来，等模型一出现立刻补跑"——包因此能落在**同一轮的第 2 步**，
- * 而不是整整晚一轮。
- * 只记**一条**：更新的用户输入会覆盖它（晚到的旧输入没有解释价值，且 reducer 的 CAS 也会拦）。
- */
-const pendingInput = new Map()
-/** P11：本会话**刚被前置拦截解释过**的原话（放行后宿主会照常追加这条消息，不能再解释第二遍）。 */
-const interceptedText = new Map()
+// ⚠ 不能放在这里：它引用的进度表是 `const`，此刻还在 TDZ 里。
 
 /**
  * **会话上下文累加器**（P10 步骤 2）：按会话攒「用户原话 + 工作 AI 回复正文」。
@@ -925,11 +912,6 @@ async function runProductionInput(ctx, session, message, { trigger = 'user-messa
       cfg,
       llmAvailable: Boolean(llm && typeof llm.stream === 'function'),
     })
-    // 模型还没观测到 ⇒ 记下这条待办：等 `request/header` 到达时**补跑**。
-    // 这样包能落在**同一轮的第 2 步**，而不是白等一整轮（宿主总是先发用户消息、后发请求头）。
-    if (d.reason === 'no-model-route' && messageId) {
-      pendingInput.set(sid, { text, messageId })
-    }
     // 记录闸门**码与理由**：`old-plugin-unknown` 这类保守拒绝如果只留一个码，
     // 用户会看到"插件装了却什么都不做"而查不出原因（EV-0078 的教训）。
     if (!d.ok) {
@@ -1245,9 +1227,7 @@ async function runInterceptInput(ctx, payload) {
   // `threw:recordUserInput: messageId required`，见 2026-09-21 的 intercept 记录）。
   const messageId = (payload && payload.messageId) ? String(payload.messageId) : ('po06-intercept-' + Date.now().toString(36))
   const t0 = Date.now()
-  // 记下"这条原话已经被前置解释过了"：放行之后宿主照常追加这条用户消息，
-  // 届时 `session/event` 触发若再解释一遍 ⇒ 同一句话跑两次模型（白花钱）且会把刚定下的包覆盖掉。
-  interceptedText.set(sid, { text, at: Date.now() })
+  const trigger = String((payload && payload.trigger) || 'intercept')
   // ── 三道**只有前置路径才等得起**的准备（真机台账逐条照出来的失败原因）──────────
   // 旧写法直接跑 pipeline，于是三条路都白跑：
   //   `gate-disabled`（启用判定是**异步且懒**的，第一次拦截时还在"判定中"，保守方向=不启用）
@@ -1269,23 +1249,21 @@ async function runInterceptInput(ctx, payload) {
   const aborted = () => Boolean(signal && signal.aborted)
   try {
     await runProductionInput(ctx, session, { text, messageId, signal }, {
-      trigger: 'intercept',
+      trigger,
       gate,
       route: route.source,
       onDelta: (d) => progressAppend(sid, d),
     })
   } catch (e) {
-    interceptedText.delete(sid)
-    progressSet(sid, { stage: 'failed', startedAt: t0, reason: String((e && e.message) || e) })
-    appendWireLog({ sessionId: sid, trigger: 'intercept', ok: false, reason: 'threw:' + String((e && e.message) || e) })
+        progressSet(sid, { stage: 'failed', startedAt: t0, reason: String((e && e.message) || e) })
+    appendWireLog({ sessionId: sid, trigger, ok: false, reason: 'threw:' + String((e && e.message) || e) })
     return { ok: false, reason: 'intercept-threw:' + String((e && e.message) || e) }
   }
   // 用户按了「跳过并发送」/「取消」⇒ **这一轮到此为止**：不读包、不认这条原话、进度面标成已中止。
   // （pipeline 里还有一道"提交前检查 aborted"的闸门，两层都拦：模型就算跑完也写不进上下文。）
   if (aborted()) {
-    interceptedText.delete(sid)
-    progressSet(sid, { stage: 'aborted', startedAt: t0 })
-    appendWireLog({ sessionId: sid, trigger: 'intercept', ok: false, reason: 'aborted', ms: Date.now() - t0 })
+        progressSet(sid, { stage: 'aborted', startedAt: t0 })
+    appendWireLog({ sessionId: sid, trigger, ok: false, reason: 'aborted', ms: Date.now() - t0 })
     return { ok: false, reason: 'aborted' }
   }
   // ── 档位闸门（关闭档 ⇒ 不注入；这里还要**把旧包撤掉**）──────────────────────
@@ -1297,10 +1275,9 @@ async function runInterceptInput(ctx, payload) {
     let pol = null
     try { pol = readPolicy({ home: DSH_HOME, sessionId: sid }) } catch { pol = null }
     if (pol && pol.injectPacket !== true) {
-      const cleared = adapter.clearIntentTexts('intercept:assist-off')
-      interceptedText.delete(sid)
-      progressSet(sid, { stage: 'aborted', startedAt: t0, reason: 'assist-off' })
-      appendWireLog({ sessionId: sid, trigger: 'intercept', ok: false, reason: 'assist-off', cleared, ms: Date.now() - t0 })
+      const cleared = adapter.clearIntentText(sid, trigger + ':assist-off')
+            progressSet(sid, { stage: 'aborted', startedAt: t0, reason: 'assist-off' })
+      appendWireLog({ sessionId: sid, trigger, ok: false, reason: 'assist-off', cleared, ms: Date.now() - t0 })
       return { ok: false, reason: 'assist-off', cleared }
     }
   }
@@ -1313,7 +1290,6 @@ async function runInterceptInput(ctx, payload) {
     const st = adapter.intentStateOf ? adapter.intentStateOf(session) : null
     if (st && st.counts && typeof st.counts.unsourced === 'number') unsourced = st.counts.unsourced
   } catch { /* 取不到就回 null（界面显示"未记录"，不拿 0 冒充"没有"） */ }
-  if (!packet.length) interceptedText.delete(sid)     // 没产出包 ⇒ 不认这条，让正常路径去解释
   return {
     ok: packet.length > 0,
     reason: packet.length ? null : (gate && gate.enabled !== true ? 'gate:' + (gate.code || 'disabled') : (route.ok ? 'no-packet' : 'route:' + route.reason)),
@@ -1911,7 +1887,7 @@ export function apply(ctx, config) {
     probe: 'dsh-po06-adapter',
     phase: 'P1-6',
     at: new Date().toISOString(),
-    note: '宿主适配层。生产路径：真实用户输入 → 解释 → 编译 → 动态上下文（零延迟，包从第 2 步生效）；自检只在 DSH_PO06_SELFCHECK=1 时运行',
+    note: '宿主适配层。生产路径：agent/pre-step 同步等待解释/审查 → 编译 → 当前 step 动态上下文；Queue/Steer 由 DSH 原生提交链保持；自检只在 DSH_PO06_SELFCHECK=1 时运行',
     // **记录真正被加载的是哪一份代码**。这不是装饰：
     //   · 本项目已因"加载路径与依赖路径不一致"吃过一次亏（P0-D2）；
     //   · 实测还遇到过"注入的是打包产物，但注入器复用了更早缓存的模块实例"，
@@ -2011,6 +1987,78 @@ export function apply(ctx, config) {
   try { ctx.inject(['tools'], (scope) => { bashToolScope = scope; syncBashTool(ctx) }) } catch { /* noop */ }
   try { syncBashTool(ctx) } catch { /* 不应影响本插件的其它能力 */ }
 
+  // ── 会话观察：只更新历史与模型事实，不再从 session/event 触发优化 ─────────
+  report.steps.sessionObserver = (() => {
+    try {
+      const off = ctx.on('session/event', (session, event) => {
+        try {
+          const sid = session && session.id !== undefined ? String(session.id) : ''
+          if (!sid) return
+          sessionHistory.observe(sid, event)
+          const cwd = resolveSessionCwd(session)
+          if (cwd) sessionHistory.setCwd(sid, cwd)
+          const observed = extractObservedModel(event)
+          if (observed) observeModel(sid, observed)
+        } catch { /* 观察失败绝不打断会话 */ }
+      })
+      ctx.effect(() => () => { try { if (typeof off === 'function') off() } catch { /* best effort */ } },
+        'dsh-po06: session observer')
+      return { ok: true, hook: 'session/event', role: 'observe-only' }
+    } catch (e) {
+      return { ok: false, reason: String((e && e.message) || e) }
+    }
+  })()
+
+  // ── 正式提交挂靠点：agent/pre-step ────────────────────────────────
+  // DSH 到这里已经完成 Queue / Steer 的原生 admission；我们只暂停 step，
+  // 等解释/审查完成后把 downstream decision 原样交回，所以无需重放 Enter/click，
+  // 也不会把 steer 降成 queue。
+  let preStepController = null
+  report.steps.productionTrigger = (() => {
+    try {
+      preStepController = createPreStepInterceptController({
+        optimize: (p) => {
+          // live Agent 自己的 route 比 request/header 更早、更准确，尤其是新会话第一条消息。
+          try {
+            const own = pickProviderModel(p && p.agent && p.agent.options)
+            if (own) observeModel(p.sessionId, own)
+          } catch { /* ensureModelRoute 仍有完整兜底链 */ }
+          return runInterceptInput(ctx, { ...p, trigger: 'pre-step' })
+        },
+        readPolicy: (sid) => readPolicy({ home: DSH_HOME, sessionId: sid }),
+        getPacket: (sid) => adapter.getIntentText(sid),
+        setPacket: async (sid, text) => {
+          try {
+            adapter.setIntentText(sid, text)
+            appendWireLog({ sessionId: sid, trigger: 'pre-step-packet-override', ok: true, chars: String(text || '').length })
+            return { ok: true, chars: String(text || '').length }
+          } catch (e) {
+            return { ok: false, reason: 'set-failed:' + String((e && e.message) || e) }
+          }
+        },
+        clearPacket: (sid, reason) => adapter.clearIntentText(sid, reason),
+        readProgress: (sid) => progressGet(sid),
+      })
+      const off = ctx.on('agent/pre-step', (payload, next) => preStepController.handle(payload, next))
+      ctx.effect(() => () => {
+        try { if (typeof off === 'function') off() } catch { /* best effort */ }
+        try { preStepController?.dispose() } catch { /* best effort */ }
+        preStepController = null
+      }, 'dsh-po06: agent pre-step interception')
+      return {
+        ok: true,
+        hook: 'agent/pre-step',
+        awaited: true,
+        sameStep: true,
+        preservesNativeDelivery: true,
+        note: '不拦 DOM、不重发消息；原生 Queue/Steer 已在进入 pre-step 前确定。',
+      }
+    } catch (e) {
+      preStepController = null
+      return { ok: false, reason: String((e && e.message) || e) }
+    }
+  })()
+
   // ── P9.2 控制 API：把设置/状态/台账/提示词暴露给控制面板 ─────────────
   // 只有带 webServer 的 profile（web）才有这一层；headless 等没有也不该有。
   // 懒注入（与 agents/sessionController 同一套写法）：apply 时刻服务还没提供。
@@ -2026,6 +2074,10 @@ export function apply(ctx, config) {
           interpret: (p) => runInterceptInput(ctx, p),
           // P11：拦截进度面（"优化中"那几十秒要看得见它在想什么）
           progress: (sid) => progressGet(sid),
+          preStepState: (sid) => preStepController ? preStepController.state(sid) : { active: false, run: null },
+          preStepDecision: (p) => preStepController
+            ? preStepController.decide(p)
+            : { ok: false, reason: 'pre-step-unavailable' },
           advisorProgress: (sid, identity) => advisorProgress.get(sid, identity),
           advisorStageStatus: sid => {
             const pol=sid ? readPolicy({home:DSH_HOME,sessionId:sid}) : null
@@ -2229,78 +2281,6 @@ export function apply(ctx, config) {
     ctx.effect(() => () => { try { if (typeof off === 'function') off() } catch { /* best effort */ } }, 'dsh-po06: delivery gate trigger')
   } catch { /* 注册失败不影响插件本体 */ }
 
-  // ── 生产触发（A15）：真实用户输入 → 解释 → 编译 → 上下文 ─────────────
-  // 这是 EV-0078 缺失的那一环：此前没有任何**生产**代码路径会调用 handleInput，
-  // 于是整条链在真实会话里不可达（346 项测试全绿而产品贡献 0 字符）。
-  report.steps.productionTrigger = (() => {
-    try {
-      const off = ctx.on('session/event', (session, event) => {
-        try {
-          const sid = session && session.id !== undefined ? String(session.id) : ''
-          // ── P10 步骤 2：先喂上下文累加器（**只观测，不做任何判定**）──────────
-          // 放在最前面：`extractObservedModel` 命中时会 `return`，那个时候
-          // `request/header`/`request/context` 事件里的正文我们也一样要收。
-          // 顺序无关紧要（这些事件不是回合边界），但"先收后判"省得日后加事件类型时漏收。
-          try {
-            if (sid) sessionHistory.observe(sid, event)
-            if (sid) {
-              const cwd = resolveSessionCwd(session)
-              if (cwd) sessionHistory.setCwd(sid, cwd)
-            }
-          } catch { /* 观测是旁路，绝不打断会话 */ }
-          // 先观测宿主自己的模型（解释层默认用它）
-          const obs = extractObservedModel(event)
-          if (obs) {
-            observeModel(sid, obs)
-            // 模型刚出现 ⇒ 若有待办输入，立刻补跑（包落在同一轮的第 2 步）
-            const p = pendingInput.get(sid)
-            if (p) {
-              pendingInput.delete(sid)
-              defer(() => runProductionInput(ctx, session, p, { trigger: 'model-observed-catchup' }))
-            }
-            return
-          }
-          if (!isRealUserInput(event)) return
-          const text = extractUserText(event)
-          // P11：这条消息如果是**刚刚被前置拦截解释过**的（拦下 → 解释 → 放行之后宿主照常追加它），
-          // 就不要再解释第二遍：同一句话跑两次模型是白花钱，而且第二次的包会把刚定下的那份覆盖掉。
-          const hit = interceptedText.get(sid)
-          const hitAge = hit ? (Date.now() - hit.at) : Infinity
-          const hitFresh = hit && hitAge < 5 * 60 * 1000
-          const sameText = hitFresh && String(hit.text).trim() === String(text).trim()
-          // ⚠ 2026-09-26 修（用户报：调 skill 时漏拦截 + 旧包迟到、新包随后才到）。
-          // 判据原先只认文本逐字相等，而前置拦截记的是客户端原文、这里取的是宿主事件里的文本。
-          // 调用 skill 时这两者形态不一致（skill 内容与包装会进入事件）⇒ 去重失配 ⇒ 同一句话被解释两遍；
-          // 而第二遍是 defer 出去的并发执行（见下方注释），两遍基于同一个旧状态各写一次，
-          // 后完成的覆盖先完成的 ⇒ 台账里 revision 倒退（实测 309 → 307），
-          // 界面上就是先到一份旧的、随后才到一份新的。
-          // 修法：同一会话在刚放行的极短窗口内，无论文本是否变形都认定为同一条。
-          // 窗口取 15 秒：拦下 → 解释（20–60s）→ 放行 → 宿主追加消息，这个间隔通常在秒级；
-          // 而真正独立的下一轮输入不可能在 15 秒内紧接在同一条拦截之后。
-          const nearInTime = hitFresh && hitAge < 15000
-          if (sameText || nearInTime) {
-            interceptedText.delete(sid)
-            appendWireLog({ sessionId: sid, trigger: 'user-message', ok: true, skipped: sameText ? 'intercepted-already' : 'intercepted-recently', chars: text.length })
-            return
-          }
-          // **不 await**：零延迟。包从第 2 步起生效（**仅在没被前置拦截时**走这条路）。
-          defer(() => runProductionInput(ctx, session,
-            { text, messageId: extractMessageId(event) }))
-        } catch { /* 生产触发是旁路，绝不打断会话 */ }
-      })
-      ctx.effect(() => () => { try { if (typeof off === 'function') off() } catch { /* best effort */ } }, 'dsh-po06: production input trigger')
-      return {
-        ok: true,
-        hook: 'session/event → user/message(source.kind=user)',
-        awaited: false,
-        log: WIRE_LOG_PATH,
-        note: '零延迟：不 await 解释层，故意图包从**第 2 步**起生效；单步任务无包（明知的取舍，非缺陷）',
-      }
-    } catch (e) {
-      return { ok: false, reason: String((e && e.message) || e) }
-    }
-  })()
-
   ctx.effect(() => () => adapter.dispose(), 'dsh-po06: adapter dispose')
 
   if (!SELF_CHECK) {
@@ -2309,8 +2289,8 @@ export function apply(ctx, config) {
       && report.steps.restingTextIsEmpty === true
       && report.steps.productionTrigger.ok === true
     report.verdict = report.ok
-      ? 'ACTIVE: 已注册且**生产触发已接线**（真实用户输入会被解释并编译成意图包；零延迟，包从第 2 步起生效）'
-      : 'DEGRADED: 注册成功但生产触发未接线 ⇒ **不会做任何事**（见 steps.productionTrigger）'
+      ? 'ACTIVE: 已注册且 agent/pre-step 生产触发已接线（同一步等待解释/审查，原生 Queue/Steer 不重发）'
+      : 'DEGRADED: 注册成功但 agent/pre-step 未接线 ⇒ **不会做任何事**（见 steps.productionTrigger）'
     writeReport(report)
     if (P8_CHECK) runP8Check(ctx)
     if (P8B_CHECK) runP8bCheck(ctx)
@@ -3071,8 +3051,8 @@ function runP8Check(ctx) {
 // 前置拦截撞上的两条"懒加载"失败（`gate-disabled` / `no-model-route`）都是**时序**问题：
 // 用真机去试既慢又不可重复 ⇒ 把这两个内部函数导出，让测试用假闸门/假 llm 服务把时序钉死。
 // ⚠ **只给测试**：生产路径不许绕过 apply 里的接线直接调它们；放在文件末尾是因为
-// 这里引用的进度表/已解释原话表都是 `const`（放前面会落进 TDZ，实测直接 ReferenceError）。
-export const __test = { awaitGateDecision, ensureModelRoute, observeModel, modelFor, observedModelBySession, progressGet, progressSet, interceptedText }
+// 这里引用的进度表是 `const`（放前面会落进 TDZ，实测直接 ReferenceError）。
+export const __test = { awaitGateDecision, ensureModelRoute, observeModel, modelFor, observedModelBySession, progressGet, progressSet }
 
 /** 只给测试：清掉"已观测模型"（含那个粘性的全局兜底），否则用例之间会互相污染。 */
 export function __resetObservedModelsForTest() { observedModelBySession.clear(); observedModel = null }
