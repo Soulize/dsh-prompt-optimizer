@@ -214,13 +214,18 @@ export function createPreStepInterceptController({
   const awaitAction = async (run, signal) => {
     if (!signal) return run.action
     if (signal.aborted) return { action: 'cancel', reason: 'turn-aborted' }
-    return Promise.race([
-      run.action,
-      new Promise((resolve) => {
-        const onAbort = () => resolve({ action: 'cancel', reason: 'turn-aborted' })
-        try { signal.addEventListener('abort', onAbort, { once: true }) } catch { /* old signal */ }
-      }),
-    ])
+    return new Promise((resolve) => {
+      let settled = false
+      const finishWait = (value) => {
+        if (settled) return
+        settled = true
+        try { signal.removeEventListener('abort', onAbort) } catch { /* old signal */ }
+        resolve(value)
+      }
+      const onAbort = () => finishWait({ action: 'cancel', reason: 'turn-aborted' })
+      try { signal.addEventListener('abort', onAbort, { once: true }) } catch { /* old signal */ }
+      void run.action.then(finishWait)
+    })
   }
 
   const handle = async (payload, next) => {
@@ -361,6 +366,23 @@ export function createPreStepInterceptController({
     }
   }
 
+  const release = (sessionId, action = 'original', reason = 'external-release') => {
+    const sid = String(sessionId || '')
+    const run = runs.get(sid)
+    if (!run) return false
+    try { run.controller?.abort(reason) } catch { /* best effort */ }
+    return resolveAction(run, { action, reason })
+  }
+
+  const releaseAll = (action = 'original', reason = 'external-release') => {
+    let released = 0
+    for (const run of runs.values()) {
+      try { run.controller?.abort(reason) } catch { /* best effort */ }
+      if (resolveAction(run, { action, reason })) released += 1
+    }
+    return released
+  }
+
   const dispose = () => {
     for (const run of runs.values()) {
       try { run.controller?.abort('dispose') } catch { /* best effort */ }
@@ -370,5 +392,5 @@ export function createPreStepInterceptController({
     runs.clear()
   }
 
-  return { handle, state, decide, dispose }
+  return { handle, state, decide, release, releaseAll, dispose }
 }
