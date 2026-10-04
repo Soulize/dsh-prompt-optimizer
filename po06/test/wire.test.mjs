@@ -242,7 +242,8 @@ function fakeSession(sid, projections) {
  */
 function fakeCtx({ llm }) {
   const handlers = []
-  const agents = { get: (id) => ({ id }) }
+  const liveAgents = new Map()
+  const agents = { get: (id) => liveAgents.get(String(id)) || null }
   const projections = fakeProjections()
   /** 被注入进来的服务引用（测试要直接驱动 context 提供者，见下面的 EV-0102 用例）。 */
   const ctxRefs = {}
@@ -250,6 +251,7 @@ function fakeCtx({ llm }) {
     handlers,
     projections,
     ctxRefs,
+    liveAgents,
     on(name, fn) { handlers.push({ name, fn }); return () => {} },
     effect() { return () => {} },
     get(name) {
@@ -334,8 +336,22 @@ function emit(ctx, session, event) {
   return hs.length
 }
 
-/** 让 fire-and-forget 的生产链路跑完（调用方**故意不 await**，所以测试自己等）。 */
-async function settle(ms = 400) { await new Promise((r) => setTimeout(r, ms)) }
+/** 驱动 DSH 的 agent/pre-step waterfall；submission 已由宿主完成，这里不模拟 Enter/click。 */
+async function enterStep(ctx, session, event, route = { provider: 'deepseek-official', model: 'deepseek-flash' }) {
+  const sid = String(session.id)
+  const agent = { id: sid, session, options: route || {} }
+  ctx.liveAgents.set(sid, agent)
+  const decision = { kind: 'enter', messages: [event.data] }
+  const payload = { agent, turn: 1, step: 1, signal: new AbortController().signal }
+  const hs = ctx.handlers.filter((x) => x.name === 'agent/pre-step')
+  let next = async () => decision
+  for (let i = hs.length - 1; i >= 0; i -= 1) {
+    const handler = hs[i].fn
+    const downstream = next
+    next = () => handler(payload, downstream)
+  }
+  return next()
+}
 
 /** 宿主真实发过的形状（EV-0078 的会话日志里逐字核对过）。 */
 const headerEvent = (provider = 'deepseek-official', model = 'deepseek-flash') => ({
@@ -343,98 +359,70 @@ const headerEvent = (provider = 'deepseek-official', model = 'deepseek-flash') =
   data: { header: { config: { provider, model, maxTokens: 256000, reasoningEffort: 'high' } } },
 })
 
-// ⚠ **顺序有意义**：模型观测在进程内是共享的（本会话优先、全局兜底）。
-// 这一条必须在**任何**观测发生之前跑，否则它会继承别的用例的观测值。
-// 它同时守两件事：① 没有模型就不解释（不编造路由）；② 模型一出现立刻**补跑**待办输入。
-await ta('A15：模型未知时记下待办；模型一出现立刻补跑（包落在同一轮第 2 步）', async () => {
+// agent/pre-step 能直接读取 live Agent route，所以新会话第一条消息不再等 request/header。
+await ta('A15：第一条消息在 agent/pre-step 当前 step 完成优化，原 downstream decision 原样返回', async () => {
   const mod = await import('../lib/index.js')
   const llm = fakeLlm(() => interpreterReply({ sid: SID, mid: MID }))
   const ctx = fakeCtx({ llm })
   mod.apply(ctx, {})
-  const sid = 'session-a15-nomodel'
-  SID = sid; MID = 'm-nomodel'
+  ok(ctx.handlers.some((x) => x.name === 'agent/pre-step'),
+    '**必须**注册 agent/pre-step 处理器（生产唯一触发点）')
+
+  const sid = 'session-a15-first'
+  SID = sid; MID = 'm-first'
   mod.adapter.enableGate.set(sid, { enabled: true, code: 'test-forced-enabled', reason: '单测放行' })
   const sess = fakeSession(sid, ctx.projections)
+  const result = await enterStep(ctx, sess, userEvent(USER_TEXT, MID))
 
-  // ① 没有任何 request/header 观测值、配置也是空的 ⇒ **跳过**而不是瞎猜
-  emit(ctx, sess, userEvent(USER_TEXT, 'm-nomodel'))
-  await settle(150)
-  eq(llm.calls.length, 0, '没有模型路由时不得调用模型')
-  eq(mod.adapter.getIntentText(sid), '', '也不得写入任何包')
-
-  // ② 宿主随后发出请求头（真实顺序：**先**用户消息、**后** request/header）
-  //    ⇒ 待办必须被补跑，包落在**同一轮**后续步骤，而不是白等一整轮
-  emit(ctx, sess, headerEvent())
-  await settle()
-  eq(llm.calls.length, 1, '模型出现后必须补跑一次解释')
-  eq(llm.calls[0].model, 'deepseek-flash', '补跑用的是观测到的模型')
-  ok((mod.adapter.getIntentText(sid) || '').length > 0, '补跑必须真的把包写进上下文')
+  eq(result.kind, 'enter', '放行的是同一个 DSH step decision')
+  eq(result.messages[0].id, MID, '用户消息 identity 不变')
+  eq(llm.calls.length, 1, '当前 step 内就完成一次解释')
+  eq(llm.calls[0].model, 'deepseek-flash', '直接使用 live Agent route')
+  ok((mod.adapter.getIntentText(sid) || '').length > 0, '包必须在当前 step 进入 systemPrompt.context')
 })
 
-await ta('A15：真实 apply() 路径下，用户输入会经解释编译成包并写进上下文', async () => {
+await ta('A15：session/event 只观察，不再触发第二次解释', async () => {
   const mod = await import('../lib/index.js')
   const llm = fakeLlm(() => interpreterReply({ sid: SID, mid: MID }))
   const ctx = fakeCtx({ llm })
   mod.apply(ctx, {})
-
-  ok(ctx.handlers.filter((x) => x.name === 'session/event').length >= 1,
-    '**必须**注册 session/event 处理器（A15：这就是 EV-0078 缺失的那一环）')
-
-  // 闸门默认未判定 ⇒ 保守不启用。显式放行这个会话（等价于配置 enabled:true + 无双重拦截）。
-  const sid = 'session-a15'
+  const sid = 'session-a15-observer'
+  SID = sid; MID = 'm-observer'
   mod.adapter.enableGate.set(sid, { enabled: true, code: 'test-forced-enabled', reason: '单测放行' })
-  SID = sid; MID = 'm-1'
-  // 宿主会先发一条 request/header（解释层据此知道该用哪个模型）
   const sess = fakeSession(sid, ctx.projections)
+
+  await enterStep(ctx, sess, userEvent(USER_TEXT, MID))
+  eq(llm.calls.length, 1, 'pre-step 解释一次')
+  emit(ctx, sess, userEvent(USER_TEXT, MID))
   emit(ctx, sess, headerEvent())
-
-  emit(ctx, sess, userEvent())
-  await settle()
-
-  const text = mod.adapter.getIntentText(sid)
-  ok(text && text.length > 0,
-    '意图包必须真的写进该会话的上下文（写不进去 = 生产路径仍然不通）。实际：' + JSON.stringify(text))
-  eq(llm.calls.length, 1, '应当恰好调用一次解释层')
-  // 用的是宿主的 system 槽（一次性调用者路径），而不是评估台那条硬编码 import
-  ok(typeof llm.calls[0].system === 'string' && llm.calls[0].system.length > 0, '必须带系统提示词')
-  eq(llm.calls[0].messages.length, 1, '只带一条用户消息')
-  eq(llm.calls[0].provider, 'deepseek-official', '用宿主观测到的 provider')
-  eq(llm.calls[0].model, 'deepseek-flash', '用宿主观测到的 model')
+  await new Promise((r) => setTimeout(r, 30))
+  eq(llm.calls.length, 1, '后续 user/message/request/header 事件只能观察，绝不能补跑')
 })
 
-await ta('A15：插件自己的投递**不得**触发第二次解释（防自激循环）', async () => {
+await ta('A15：非真人来源进入 pre-step 不触发优化（防自激循环）', async () => {
   const mod = await import('../lib/index.js')
   const llm = fakeLlm(() => interpreterReply({ sid: SID, mid: MID }))
   const ctx = fakeCtx({ llm })
   mod.apply(ctx, {})
   const sid = 'session-a15-loop'
   mod.adapter.enableGate.set(sid, { enabled: true, code: 'test-forced-enabled', reason: '单测放行' })
-  SID = sid; MID = 'm-real'
   const sess = fakeSession(sid, ctx.projections)
-  emit(ctx, sess, headerEvent())
-
-  emit(ctx, sess, userEvent(USER_TEXT, 'm-real'))
-  await settle()
-  const after1 = llm.calls.length
-  ok(after1 >= 1, '真人输入必须先触发一次解释，否则这条测试没有意义')
-
-  emit(ctx, sess, pluginEvent(mod.adapter.getIntentText(sid)))
-  await settle()
-  eq(llm.calls.length, after1, '插件投递不得触发解释（否则自激循环）')
+  const decision = await enterStep(ctx, sess, pluginEvent('插件上下文'))
+  eq(decision.kind, 'enter', '非真人消息交还下游')
+  eq(llm.calls.length, 0, '插件消息不得触发解释')
 })
 
-await ta('A15：闸门未放行时，绝不调用模型（保守方向）', async () => {
+await ta('A15：闸门未放行时，pre-step fail-open 且绝不调用优化模型', async () => {
   const mod = await import('../lib/index.js')
   const llm = fakeLlm(() => interpreterReply({ sid: SID, mid: MID }))
   const ctx = fakeCtx({ llm })
   mod.apply(ctx, {})
-  // 不设闸门 ⇒ 未判定 ⇒ 不启用
-  const gated = fakeSession('session-a15-gated', ctx.projections)
-  emit(ctx, gated, headerEvent())
-  emit(ctx, gated, userEvent(USER_TEXT, 'm-gate'))
-  await settle()
-  eq(llm.calls.length, 0, '未放行时一次模型调用都不能发生')
-  eq(mod.adapter.getIntentText('session-a15-gated'), '', '也不得写入任何包')
+  const sid = 'session-a15-gated'
+  const sess = fakeSession(sid, ctx.projections)
+  const result = await enterStep(ctx, sess, userEvent(USER_TEXT, 'm-gate'))
+  eq(result.kind, 'enter', '插件未启用时原消息继续')
+  eq(llm.calls.length, 0, '未放行时一次优化模型调用都不能发生')
+  eq(mod.adapter.getIntentText(sid), '', '也不得写入任何包')
 })
 
 // ── 4a2. EV-0143：控制面板上的"只记录、不补充"必须真的不解释、不调用模型 ──
@@ -454,8 +442,8 @@ await ta('EV-0143：assist=off ⇒ 不调用模型、不写包，台账记 assis
   try {
     const s = fakeSession('session-ev0143-off', ctx.projections)
     emit(ctx, s, headerEvent())
-    emit(ctx, s, userEvent(USER_TEXT, 'm-off'))
-    await settle()
+    await enterStep(ctx, s, userEvent(USER_TEXT, 'm-off'))
+
     eq(llm.calls.length, 0, 'assist=off 时**一次模型调用都不能发生**')
     eq(mod.adapter.getIntentText('session-ev0143-off'), '', '也不得写入任何包')
     const lines = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8').trim().split('\n').filter(Boolean).map((x) => JSON.parse(x)) : []
@@ -488,9 +476,9 @@ await ta('EV-0143：po06-prompt.md 覆盖生效（解释层 system 用它，不�
     // 闸门放行（与本用例无关；夹具里首次判定会停在 decision-pending，见 4a 那条）
     mod.adapter.enableGate.set('session-ev0143-prompt', { enabled: true, code: 'test-forced-enabled', reason: '单测放行' })
     emit(ctx, s, headerEvent())
-    await settle()
-    emit(ctx, s, userEvent(USER_TEXT, 'm-prompt'))
-    await settle()
+
+    await enterStep(ctx, s, userEvent(USER_TEXT, 'm-prompt'))
+
     const lp = join(TEST_HOME, 'po06-wire.jsonl')
     const tail = existsSync(lp) ? readFileSync(lp, 'utf8').trim().split('\n').slice(-3).join(' || ') : '(无台账)'
     ok(llm.calls.length >= 1, '这次应当真的调用模型（assist 默认 auto）；台账尾部=' + tail)
@@ -523,8 +511,7 @@ await ta('EV-0081：生产提交**不写会话日志**，状态落在插件自�
   sess.append = (type, data) => { sess.appended.push(type); return origAppend(type, data) }
 
   emit(ctx, sess, headerEvent())
-  emit(ctx, sess, userEvent())
-  await settle()
+  await enterStep(ctx, sess, userEvent())
 
   eq(sess.appended, [], '**不得**向会话日志追加任何事件（否则宿主会拒绝重建该会话）')
   const saved = mod.adapter.intentStateOf(sess)
