@@ -157,6 +157,8 @@ export function createPreStepInterceptController({
     if (id && String(id) !== run.id) return { ok: false, reason: 'stale-review', currentId: run.id }
     const a = String(action || '')
     if (!ACTIONS.has(a)) return { ok: false, reason: 'bad-action' }
+    const actionable = run.phase === 'optimizing' || run.phase === 'review' || run.phase === 'error'
+    if (!actionable) return { ok: false, reason: 'review-finished', phase: run.phase }
     if (a === 'confirm' && run.phase !== 'review' && run.phase !== 'error') {
       return { ok: false, reason: 'not-reviewing' }
     }
