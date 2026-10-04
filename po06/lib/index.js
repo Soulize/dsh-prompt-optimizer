@@ -62,7 +62,8 @@ import { registerControlApi, resolvePrompt } from './control-api.js'
 // 手动结案（用户 2026-09-21 拍板 A 案）后要**立刻重编译并写回动态上下文**：
 // 不重编译的话，包里还是旧的那一份，用户会以为"点了没用"。
 import { compileAudited } from './compiler.js'
-import { readPolicy, packetShapeChanged } from './policy.js'
+import { readPolicy } from './policy.js'
+import { ensureSettingsFile } from './settings.js'
 import { runGate, createMemoryLedgerStore, LEVEL, resolveLevel } from './gate.js'
 import { detectOldPluginRuntime, mergeOldPluginSignals } from './detect-old.js'
 import { decideEnabled } from './rollout.js'
@@ -548,9 +549,13 @@ function toolPresentInTable(tools, name) {
  * 幂等：只做差额，所以设置每次写盘都可以直接调它。
  * @returns {{ok:boolean, on:boolean, changed:boolean, reason?:string}}
  */
+export function shouldProvideBuiltInBash({ platform = process.platform, enabled = true } = {}) {
+  return enabled !== false && platform === 'win32'
+}
+
 export function syncBashTool(ctx) {
-  let want = true
-  try { want = readPolicy({ home: DSH_HOME }).bash !== false } catch { want = true }
+  let configured = true
+  try { configured = readPolicy({ home: DSH_HOME }).bash !== false } catch { configured = true }
   // ⚠ 2026-09-26：**让位判据**（用户反馈：Linux 用户关了内置 bash 后什么都没有）。
   //
   // 背景：宿主的 @deepseek-ai/dsh-tool-bash 也注册名为 bash 的工具，而它在
@@ -563,8 +568,7 @@ export function syncBashTool(ctx) {
   //
   // 为什么用**平台**而不是"查表里有没有 bash"：表里只看得到名字，分不清那份是谁注册的；
   // 若用"查表"，po06 自己刚注册完再查就会把自己认成宿主，判据失明。平台是静态事实，不依赖时序。
-  const hostProvidesBash = process.platform !== 'win32'
-  if (hostProvidesBash) want = false
+  const want = shouldProvideBuiltInBash({ platform: process.platform, enabled: configured })
   const hostCtx = ctx || hostCtxForBashSync
   const scope = bashToolScope
   const tools = (scope && scope.tools) ? scope.tools
@@ -1445,6 +1449,16 @@ class DshAdapter {
    * 清掉之后，只有本轮的拦截能产生包（包本来就是"只作用于这一轮"的东西）。
    * @returns 清掉的会话数
    */
+  clearIntentText(sessionId, reason) {
+    const sid = String(sessionId == null ? '' : sessionId)
+    if (!sid) return 0
+    const had = this.intentBySession.delete(sid)
+    if (had) {
+      try { appendWireLog({ trigger: 'packet-cleared', ok: true, cleared: 1, sessionId: sid, reason: String(reason || '') }) } catch { /* best effort */ }
+    }
+    return had ? 1 : 0
+  }
+
   clearIntentTexts(reason) {
     const n = this.intentBySession.size
     if (n > 0) this.intentBySession.clear()
@@ -1804,6 +1818,11 @@ function writeReport(report) {
 }
 
 export function apply(ctx, config) {
+  // po06.json 是本插件独占配置：首装就创建并写入 enabled:true + rollout:all。
+  // 已有显式 off/allowlist 原样保留；坏 JSON 不自动覆盖。
+  let settingsInit = null
+  try { settingsInit = ensureSettingsFile({ path: ENABLE_CONFIG_PATH }) }
+  catch (e) { settingsInit = { ok: false, changed: false, reason: 'init-threw:' + String((e && e.message) || e) } }
   try {
     ctx.inject(['clientModules'], (scope) => {
       let live = true
@@ -1901,6 +1920,7 @@ export function apply(ctx, config) {
     cwd: process.cwd(),
     steps: {},
   }
+  report.steps.settingsInit = settingsInit
 
   adapter.services.agents = ctx.get('agents') || null
   adapter.services.sessionController = ctx.get('sessionController') || null
@@ -2105,27 +2125,26 @@ export function apply(ctx, config) {
            *      不清的话，"关档 → 再开档"之间那份**上一轮的旧包**会在重新开档时立刻复活并注入；
            *   ③ 启用闸门作废 —— `enabled` / 灰度也在这份配置里，改完必须重判（原来只靠 5 分钟 TTL）。
            */
-          onSettingsWritten: () => {
-            // ⚠ 必须在 invalidatePolicy() **之前**取：那是写盘前的生效政策，
-            //   与写盘后的一比，就知道"包的整体形状"变没变。
-            let polBefore = null
-            try { polBefore = adapter.policyNow() } catch { polBefore = null }
+          onSettingsWritten: ({ scope = 'global', sessionId = null, patch = {} } = {}) => {
+            // 文件已经写成功，此处只负责让运行时立刻看见新值。
+            // 旧实现试图在“写后”再读 polBefore 做 shape diff：缓存为空时两次都读到新文件，
+            // 比较恒等于没变；而且没传 sessionId，bySession 改动完全照不到。
+            // 设置写入很低频，正确性优先：全局改动清所有当前包；会话改动只清该会话。
             adapter.invalidatePolicy()
-            let pol = null
-            try { pol = adapter.policyNow() } catch { pol = null }
-            const cleared = (pol && pol.injectPacket !== true) ? adapter.clearIntentTexts('settings:assist-off') : 0
-            // 协作基调 / 档位 / 补充程度变了 ⇒ **旧的包文本必须作废**：
-            // 它是按当时的政策编译好的一整段字符串，政策一变就过期；不作废的话，
-            // 切回普通档后那段硬邦邦文本会继续被注入（用户实测 2026-09-29）。
-            // 清掉不是"丢内容"：下一次拦截会按新政策重编译，那才是正确时机。
-            const shapeChanged = packetShapeChanged(polBefore, pol)
-            const clearedShape = shapeChanged ? adapter.clearIntentTexts('settings:packet-shape-changed') : 0
-            // 内置 Bash 的开关在同一份配置里：写盘后立刻按差额同步（关掉即从模型视野消失，
-            // 不需要重启、也不需要重载插件）。
+            const cleared = scope === 'session' && sessionId
+              ? adapter.clearIntentText(sessionId, 'settings:session-changed')
+              : adapter.clearIntentTexts('settings:global-changed')
+
+            // Bash 是宿主级工具注册，只允许全局设置控制；session endpoint 根本不接收它。
             let bashSync = null
-            try { bashSync = syncBashTool(hostCtxForBashSync) } catch (e) { bashSync = { ok: false, reason: String((e && e.message) || e) } }
-            try { if (adapter.enableGate && typeof adapter.enableGate.invalidateAll === 'function') adapter.enableGate.invalidateAll() } catch { /* best effort */ }
-            return { injectPacket: Boolean(pol && pol.injectPacket), cleared, clearedShape, shapeChanged, bashSync }
+            if (scope !== 'session' && Object.prototype.hasOwnProperty.call(patch || {}, 'bash')) {
+              try { bashSync = syncBashTool(hostCtxForBashSync) }
+              catch (e) { bashSync = { ok: false, reason: String((e && e.message) || e) } }
+            }
+            try {
+              if (adapter.enableGate && typeof adapter.enableGate.invalidateAll === 'function') adapter.enableGate.invalidateAll()
+            } catch { /* best effort */ }
+            return { scope, sessionId, cleared, bashSync }
           },
           /**
            * 闸门结论的**分布**（诊断用，见 control-api `/status.gate`）。

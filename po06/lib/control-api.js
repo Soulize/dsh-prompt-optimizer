@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { SYSTEM_PROMPT } from './interpreter.js'
 import { parseEnableIntent } from './assembly-gate.js'
 import { effectiveSettings } from './policy.js'
-import { normalizeSettings, describeSettings, writeSettings, SETTINGS_KEYS, parseJsonText } from './settings.js'
+import { normalizeSettings, describeSettings, writeSettings, writeSessionSettings, SETTINGS_KEYS, SESSION_KEYS, parseJsonText } from './settings.js'
 
 export const API_PREFIX = '/po06/api'
 /** 写操作必须带的自定义头（见文件头 ③）。 */
@@ -425,8 +425,10 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
           // 会话生效值（无 ?session= 时为 null）：界面用它显示"本会话的档位"
           sessionId: qsid || null,
           sessionEffective: sessEff
-            ? { tier: sessDesc.tier, assist: sessEff.assist, detail: sessEff.detail, budget: sessEff.budget, framing: sessEff.framing || 'neutral' }
+            ? Object.fromEntries(SESSION_KEYS.map((k) => [k, k === 'tier' ? sessDesc.tier : sessEff[k]]))
             : null,
+          sessionOverride: qsid ? ((norm.settings.bySession && norm.settings.bySession[qsid]) || {}) : null,
+          sessionHasOverride: Boolean(qsid && norm.settings.bySession && norm.settings.bySession[qsid]),
           sessionDescribed: sessDesc,
           // ⚠ 启动闸门自己的字段（enabled / rollout / settingsVersion）**不是**"不认识的字段"，
           // 只是不属于**设置**白名单。真实宿主实测（EV-0141）时它们被当成 problems 报给界面，
@@ -470,6 +472,43 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         }
         return send(200, { ok: true, lang: wantEn ? 'zh' : 'zh', note: wantEn ? 'english help file not found; served the Chinese one' : null, ...resolveHelp(help) })
       }
+      if (method === 'POST' && path === API_PREFIX + '/settings/session') {
+        const body = await readBody(req)
+        if (!body.ok) return send(400, { ok: false, reason: body.reason })
+        const v = body.value || {}
+        const sid = String(v.sessionId || '').trim()
+        if (!sid) return send(400, { ok: false, reason: 'session-required' })
+        const r = writeSessionSettings({
+          path: cfgPath,
+          sessionId: sid,
+          patch: v.patch || {},
+          reset: v.reset === true,
+          now: now(),
+        })
+        let hook = null
+        let hookError = null
+        if (r.ok === true && typeof onSettingsWritten === 'function') {
+          try {
+            hook = onSettingsWritten({
+              scope: 'session',
+              sessionId: sid,
+              patch: v.patch || {},
+              reset: v.reset === true,
+              before: r.before || null,
+              after: r.after || null,
+              settings: normalizeSettings(r.after).settings,
+            })
+          } catch (e) { hookError = String((e && e.message) || e) }
+        }
+        return send(r.ok ? 200 : 500, {
+          ok: r.ok, reason: r.reason || null, backup: r.backup || null, problems: r.problems || [],
+          settings: normalizeSettings(r.after || {}).settings,
+          described: describeSettings(normalizeSettings(r.after || {}).settings),
+          sessionId: sid,
+          sessionOverride: ((normalizeSettings(r.after || {}).settings.bySession || {})[sid]) || {},
+          hook, hookError,
+        })
+      }
       if (method === 'POST' && path === API_PREFIX + '/settings') {
         const body = await readBody(req)
         if (!body.ok) return send(400, { ok: false, reason: body.reason })
@@ -484,7 +523,7 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         let hook = null
         let hookError = null
         if (r.ok === true && typeof onSettingsWritten === 'function') {
-          try { hook = onSettingsWritten({ patch: body.value || {}, settings: normalizeSettings(r.after).settings }) }
+          try { hook = onSettingsWritten({ scope: 'global', sessionId: null, patch: body.value || {}, before: r.before || null, after: r.after || null, settings: normalizeSettings(r.after).settings }) }
           catch (e) { hookError = String((e && e.message) || e) }
         }
         return send(r.ok ? 200 : 500, {
