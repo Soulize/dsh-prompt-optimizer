@@ -438,6 +438,44 @@ await t('handler：POST /interpret —— 成功回包；无 hook 如实 501；h
   eq(noHead.status, 403, '缺写头必须 403')
 })
 
+await t('handler：pre-step 审查状态只读查询 + 决议写入，不承担重新发送', async () => {
+  const home = tmp()
+  const seen = []
+  const h = createControlHandler({
+    home,
+    preStepState: (sessionId) => ({
+      active: sessionId === 's1',
+      run: sessionId === 's1' ? { id: 'r1', sessionId, phase: 'review', packet: 'PACK' } : null,
+    }),
+    preStepDecision: async (decision) => {
+      seen.push(decision)
+      return { ok: true, id: decision.id, action: decision.action }
+    },
+  })
+  const missing = await GET(h, API_PREFIX + '/pre-step-review')
+  eq(missing.status, 400, '查询必须带 session')
+  const a = await GET(h, API_PREFIX + '/pre-step-review?session=s1')
+  eq(a.status, 200, '状态查询 200')
+  eq(a.body.active, true, 's1 有正在等待的 pre-step')
+  eq(a.body.run.id, 'r1', '返回 Host run identity')
+  const b = await GET(h, API_PREFIX + '/pre-step-review?session=s2')
+  eq(b.body.active, false, 's2 不能看到 s1 的状态')
+
+  const decided = await POST(h, API_PREFIX + '/pre-step-review/decision', {
+    sessionId: 's1', id: 'r1', action: 'confirm', text: 'EDITED',
+  })
+  eq(decided.status, 200, '决议写入成功')
+  eq(seen.length, 1, 'Host 只收到一次决议')
+  eq(seen[0], { sessionId: 's1', id: 'r1', action: 'confirm', text: 'EDITED' }, '字段原样交给 pre-step 控制器')
+
+  const noHook = createControlHandler({ home })
+  const unavailable = await POST(noHook, API_PREFIX + '/pre-step-review/decision', {
+    sessionId: 's1', id: 'r1', action: 'original',
+  })
+  eq(unavailable.status, 501, '没有 Host pre-step 控制器就明确 501')
+  eq(unavailable.body.reason, 'pre-step-unavailable', '不能假装已经发送')
+})
+
 await t('handler：超大 body 被拒（不许被打爆）', async () => {
   const home = tmp()
   const h = createControlHandler({ home })

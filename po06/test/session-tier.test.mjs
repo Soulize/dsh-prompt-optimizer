@@ -110,6 +110,10 @@ test('守卫本身必须有效：删掉定义时它要能报出来（否则就�
   // 用**内存里模拟的真实缺陷**证明敏感度——这两条正是把用户界面搞挂的两种写法。
   const noEff = CLIENT.replace('      const eff = (status && status.sessionEffective) || s\n', '')
   assert.ok(scanScope(noEff).some((p) => /ControlForm/.test(p)), '删掉 ControlForm 的 eff 定义应被报出')
-  const noSid = CLIENT.replace('      const { sessionId } = props || {}\n', '')
+  const settingsAt = CLIENT.indexOf('    function SettingsTab(props)')
+  assert.ok(settingsAt >= 0, '要能定位 SettingsTab')
+  const sidAt = CLIENT.indexOf('      const { sessionId } = props || {}\n', settingsAt)
+  assert.ok(sidAt > settingsAt, '要能定位 SettingsTab 自己的 sessionId 定义')
+  const noSid = CLIENT.slice(0, sidAt) + CLIENT.slice(sidAt + '      const { sessionId } = props || {}\n'.length)
   assert.ok(scanScope(noSid).some((p) => /SettingsTab/.test(p)), '删掉 SettingsTab 的 sessionId 定义应被报出')
 })
