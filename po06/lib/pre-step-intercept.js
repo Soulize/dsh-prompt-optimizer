@@ -284,6 +284,7 @@ export function createPreStepInterceptController({
         signal: controller ? controller.signal : parentSignal || null,
         turn: payload && payload.turn,
         step: payload && payload.step,
+        agent: payload && payload.agent,
       })).then(
         (value) => ({ ok: true, value }),
         (error) => ({ ok: false, error }),
