@@ -2186,6 +2186,13 @@ export function apply(ctx, config) {
             const cleared = scope === 'session' && sessionId
               ? adapter.clearIntentText(sessionId, 'settings:session-changed')
               : adapter.clearIntentTexts('settings:global-changed')
+            // 设置变化发生在审查等待期间时，旧审查不能继续使用已经失效的配置。
+            // 直接按原文释放同一个 DSH decision；不重新 submit，也不留下悬挂的 Host step。
+            const releasedReviews = preStepController
+              ? (scope === 'session' && sessionId
+                  ? (preStepController.release(sessionId, 'original', 'settings:session-changed') ? 1 : 0)
+                  : preStepController.releaseAll('original', 'settings:global-changed'))
+              : 0
 
             // Bash 是宿主级工具注册，只允许全局设置控制；session endpoint 根本不接收它。
             let bashSync = null
@@ -2196,7 +2203,7 @@ export function apply(ctx, config) {
             try {
               if (adapter.enableGate && typeof adapter.enableGate.invalidateAll === 'function') adapter.enableGate.invalidateAll()
             } catch { /* best effort */ }
-            return { scope, sessionId, cleared, bashSync }
+            return { scope, sessionId, cleared, releasedReviews, bashSync }
           },
           /**
            * 闸门结论的**分布**（诊断用，见 control-api `/status.gate`）。
