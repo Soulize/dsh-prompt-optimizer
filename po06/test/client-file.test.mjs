@@ -325,42 +325,34 @@ t('主题 token 的 CSS：必须同时覆盖"标记在自身"与"标记在祖先
   ok(css.indexOf('--po06-surface:#ffffff') < css.indexOf('--po06-surface:#1b1b1d'), '浅色在前、深色在后（同级时后者胜）')
 })
 
-t('P11 前置拦截：捕获阶段接管、没有放行通道就不拦、失败必放行、去重、关闭档不拦', () => {
+t('P11 前置拦截：Host agent/pre-step 拥有发送时序，客户端只负责审查决议', () => {
   for (const anchor of ['intercept', 'intercept-skip', 'intercept-confirm', 'intercept-original',
     'intercept-regen', 'intercept-text', 'intercept-elapsed']) {
     ok(src.includes("'data-po06': '" + anchor + "'"), '缺少拦截界面锚点 data-po06=' + anchor)
   }
-  // ① 捕获阶段（true 是第三个参数）：必须早于 React 根容器与编辑器自身处理器
-  ok(/addEventListener\('keydown', onKey, true\)/.test(src), 'keydown 必须在捕获阶段挂')
-  ok(/addEventListener\('click', onClick, true\)/.test(src), 'click 必须在捕获阶段挂')
-  ok(/removeEventListener\('keydown', onKey, true\)/.test(src), '卸载时必须摘掉监听（HMR 后旧实例不得再拦）')
-  // ② 没有 inputActions ⇒ 绝不武装（拦下却放不出去 = 吞消息）
-  ok(/const canArm = !!\(inputActions && typeof inputActions\.submit === 'function' && sessionId\)/.test(src),
-    'canArm 必须同时要求 inputActions.submit 与 sessionId')
-  ok(/if \(!canArm \|\| tierOff \|\| !data\) return undefined/.test(src), '没通道/关闭档/状态未知 ⇒ 不挂监听')
-  ok(/'data-po06-actions': canArm \? '1' : '0'/.test(src), '能不能拦必须做成真机可读的标记（否则"以为在拦"）')
-  // ③ fail-open：拿不到包也必须**有个交代**，而且**审查档绝不自动发送**。
-  //    ⚠ 两条断言都是"真机反馈"的回锚：
-  //      · "拦不住"——原因不能吞（早先写法最终只剩"已发送"，用户看不到为什么）；
-  //      · "审查模式几秒后还是把原文发出去了"——fail-open 只能在**自动**档做。
-  ok(/const settleFailure = \(text, h, why\) => \{/.test(src), '必须有统一的失败收场函数')
-  ok(/if \(permissionRef\.current === 'review'\) \{/.test(src), '审查档：失败必须停在面板里等用户决定（不自动发送）')
-  ok(/phase: 'error', reason: why/.test(src), '审查档失败要进 error 态并带上原因')
-  ok(/settleFailure\(text, h, reasonText\(\(r && r\.reason\) \|\| 'unknown'\)\)/.test(src), '失败原因要人话化后交给收场函数')
-  ok(/按原文发出/.test(src), '审查态必须给"按原文发出"这个出口')
-  // ④ 去重：同一次发送可能同时命中 Enter 与 click（0.5 的 coalesced）。
-  //    计数必须在 beginHold 的**去重之后**加，否则"本会话已拦截 N 次"会虚高。
-  ok(/holdRef\.current\) return/.test(src), '必须用 ref 去重（state 在同一事件循环里还没生效）')
-  ok(/setInterceptCount\(\(n\) => n \+ 1\)/.test(src), '计数存在')
+  // 浏览器不能再劫持 DSH 的发送路径：这正是 steer 被降成 queue 的根因。
+  for (const forbidden of [
+    'inputActions.submit', 'nativeReleaseBypass', 'dispatchAcceleratedSubmit',
+    'sendModeForButton', 'keyDeliveryMode', 'steerLabelsNow', 'queueLabelsNow',
+    'stopImmediatePropagation', "addEventListener('keydown', onKey, true)",
+    "addEventListener('click', onClick, true)", "apiPost('/interpret'",
+  ]) {
+    ok(!src.includes(forbidden), '客户端不得再包含旧发送劫持：' + forbidden)
+  }
+  // 状态来自 Host；所有按钮只写 decision，不重放 Enter/click。
+  ok(/usePreStepReview/.test(src), '必须轮询 Host pre-step 审查状态')
+  ok(/\/pre-step-review\?session=/.test(src), '必须按 sessionId 读 Host 审查状态')
+  ok(/apiPost\('\/pre-step-review\/decision'/.test(src), '按钮只能向 Host 提交审查决议')
+  for (const action of ['confirm', 'original', 'skip', 'regen', 'cancel']) {
+    ok(src.includes("hostDecision('" + action + "'"), '缺少 Host 决议：' + action)
+  }
+  // 同一个 Host run 的 250ms 刷新不得覆盖用户正在编辑的包。
+  ok(/cur\.id === row\.id/.test(src) && /keepEdit/.test(src), '必须按 run.id 保留审查中的本地编辑')
   eq((src.match(/setInterceptCount\(\(n\) => n \+ 1\)/g) || []).length, 1,
-    '计数只允许在 beginHold 里去重之后加一次（事件处理函数里再加会翻倍）')
-  // ⑤ 命令（/xxx）与空草稿交还官方
-  // 0.8：斜杠命令**默认仍交还官方**，只有名单内且宿主确认已注册的才放行（判定见纯函数那条用例）。
-  ok(/if \(t\.startsWith\('\/'\) && !slashAllowedDraft\(t\)\) return 'slash-command'/.test(src), '斜杠命令默认交还官方，名单内已注册的才拦')
-  ok(/slashActive/.test(src) && /data\.slashReview/.test(src), '放行名单必须来自宿主 /status.slashReview（不能自己猜命令表）')
-  ok(/if \(!draftNow\(\)\) return 'empty-draft'/.test(src), '空草稿不拦（那时主按钮是"停止生成"）')
-  // ⑥ 诊断可见：真机上要能分辨"监听器没挂上"与"判定放行了"（两者修法完全不同）
-  ok(/data-po06-seen/.test(src) && /data-po06-lastpass/.test(src), '必须暴露"看见几个事件/最后一次为什么放行"')
+    '每个新的 Host run 只计一次拦截')
+  ok(/'data-po06-actions': canArm \? '1' : '0'/.test(src), 'Host pre-step 可用性仍要做成真机可读标记')
+  ok(/取消发送/.test(src) && /不会保留为输入框草稿/.test(src),
+    '取消语义必须与 Host 已领取消息一致，不能再承诺恢复草稿')
 })
 
 t('控件栏挂在 conversation.input.left（id=prompt-optimizer, order=20），浮层与设置页不动', () => {
