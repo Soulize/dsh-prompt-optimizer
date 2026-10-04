@@ -1526,7 +1526,8 @@ window.__ModuleLoader__.load({
       const statusLabel = phase === 'optimizing' ? L('优化中…', 'Optimizing…')
         : (phase === 'review' || phase === 'sent') ? L('已完成', 'Done')
           : phase === 'skipped' ? L('已跳过', 'Skipped')
-            : (phase === 'error' || phase === 'failed') ? L('失败', 'Failed') : L('待命', 'Idle')
+            : phase === 'cancelled' ? L('已取消发送', 'Send cancelled')
+              : (phase === 'error' || phase === 'failed') ? L('失败', 'Failed') : L('待命', 'Idle')
       // 时间徽标：优化中给**已用秒数**（真实、每秒更新），完成后给**总耗时**（/interpret 回的 ms）。
       // 0.5 这里给的是"首字 ms"（流式才有），0.6 没有流式 ⇒ 不冒充（见上面的真相差异①）。
       const elapsedText = phase === 'optimizing'
@@ -1571,6 +1572,13 @@ window.__ModuleLoader__.load({
             L('把上一版注入的包放回来（本会话最多可退 10 版；没有上一版时会如实告诉你）',
               'Restore the previous packet for this session (up to 10 versions; it will say so if there is none)')),
         ])
+        : phase === 'cancelled'
+          ? footWrap('cancelled', [
+            h('span', { 'data-po06': 'intercept-sent-tag', style: S.ovSentTag },
+              L('已取消发送 · 未进入工作模型', 'Send cancelled · not delivered to the working model')),
+            btn({ 'data-po06': 'intercept-close' }, L('关闭', 'Close'), props.onCloseSent, null,
+              L('关闭这次取消结果', 'Close this cancelled result')),
+          ])
         // foot-sent（0.5:1650-1657）：放行之后只读回看 —— 关闭 / 重新生成
         : (phase === 'sent' || phase === 'skipped' || phase === 'failed')
           ? footWrap('sent', [
@@ -1927,13 +1935,11 @@ window.__ModuleLoader__.load({
       const rtKnown = !!data
       const readTools = rtKnown ? !!edit.readTools : false
 
-      // tierOff 是【当前会话运行态】，不能跟随 UI scope；否则查看全局默认时会改变拦截行为。
+      // tierOff 是【当前会话运行态】，不能跟随 UI scope；否则查看全局默认时会改变运行行为。
       const tierOff = tier === 'off'
       React.useEffect(() => {
         if (!tierOff) return
-        setHold(null)
         setProg(null)
-        setOvOpen(false)
       }, [tierOff, sessionId])
 
       // Bash 是宿主工具注册，物理上就是全局资源，绝不伪装成 session 配置。
@@ -1967,143 +1973,32 @@ window.__ModuleLoader__.load({
       const save = (patch) => editingSession ? saveSession(patch) : saveGlobal(patch)
       const resetCurrentSession = () => saveSession({}, true)
 
-      // ── P11 前置拦截的运行时（放行 / 失败兜底 / 去重）──────────────────
-      // 三条不变量：
-      //   ① **拦下就一定要放行**（成功、失败、被跳过、用户点"按原文发出"都算）——绝不让消息凭空消失；
-      //   ② **拿不到 `inputActions` 就绝不拦截**（`canArm` 为 false 时监听器根本不挂）；
-      //   ③ 同一次发送可能同时命中 Enter 与 click（0.5 的 `coalesced`）⇒ 用 ref 去重，不能靠 state。
-      const permissionRef = React.useRef(permission)
-      permissionRef.current = permission
-      const canArm = !!(inputActions && typeof inputActions.submit === 'function' && sessionId)
-      canArmRef.current = canArm
-      // 斜杠命令放行（0.8）：名单来自设置，但**只有宿主确认该命令当前已注册**才会出现在 active 里。
-      // 拿不到清单、没列、没注册 ⇒ 一律交还宿主（旧行为）——我们不认识这条命令，就绝不接管它。
-      const slashActive = (() => {
-        const rows = (data && data.slashReview && Array.isArray(data.slashReview.active)) ? data.slashReview.active : []
-        return new Set(rows.map((n) => String(n).toLowerCase()))
-      })()
-      const slashNameOf = (t) => {
-        const m = /^\/([A-Za-z0-9][A-Za-z0-9_-]*)(\s|$)/.exec(String(t == null ? '' : t))
-        return m ? m[1].toLowerCase() : null
-      }
-      const slashAllowedDraft = (t) => slashReviewAllowed([...slashActive], t)
-
-      const clearHoldSoon = () => { window.setTimeout(() => { holdRef.current = null; setHold(null) }, 1600) }
-      /** 放行：**先把拦下的那条原话写回草稿**，再交给宿主的 submit。
-       *  为什么"总是写一遍"（而不是仅在 DOM 与状态不一致时）：拦下的字是从 **DOM** 读的，
-       *  而 submit 发的是**宿主状态**里的草稿——两者可能不同步（真机探针实测：headless 下
-       *  `execCommand` 不生效、DOM 有字而状态没有）。放行的必须是**用户按下发送时的那一条**，
-       *  所以这里无条件对齐一次（草稿本来就一样时，写回是幂等的）。 */
-      const releaseHold = (text, h, mark) => {
-        try {
-          // 名单内命令的守门（0.8）：审查浮层可以改内容，但**不允许把命令本身换掉**。
-          // 换掉就不再是原命令了 ⇒ 退回用户按下发送时的那一条原话，交还宿主自行处理。
-          let outgoing = text
-          const held = h && typeof h.text === 'string' ? h.text : ''
-          const heldName = slashNameOf(held)
-          if (heldName && slashActive.has(heldName) && slashNameOf(outgoing) !== heldName) outgoing = held
-          if (typeof inputActions.setDraft === 'function') inputActions.setDraft(outgoing)
-          const deliveryMode = h && h.deliveryMode === 'steer' ? 'steer' : 'queue'
-          if (deliveryMode === 'steer') {
-            const card = composerCard(rootRef.current)
-            const steerBtn = currentSteerButton(card)
-            const queueBtn = currentQueueButton(card)
-            if (steerBtn) {
-              // 主按钮本身就是 Steer：让 DSH 原生 onPrimary -> keyboard.submit('steer')。
-              nativeReleaseBypass.current += 1
-              const armed = nativeReleaseBypass.current
-              try { steerBtn.click() } finally {
-                if (nativeReleaseBypass.current === armed) nativeReleaseBypass.current -= 1
-              }
-            } else if (queueBtn) {
-              // 主按钮是 Queue 时，Steer 只存在于 DSH 的“互补发送”快捷键。
-              // 重放 accelerated Enter，让官方 keymap/resolveSubmitMode 自己得到 steer。
-              nativeReleaseBypass.current += 1
-              const armed = nativeReleaseBypass.current
-              const dispatched = dispatchAcceleratedSubmit(card)
-              if (!dispatched || nativeReleaseBypass.current === armed) nativeReleaseBypass.current -= 1
-              if (!dispatched) inputActions.submit()
-            } else {
-              // 优化期间运行已经结束：没有当前回合可插话，按普通消息提交。
-              inputActions.submit()
-            }
-          } else {
-            inputActions.submit()
-          }
-          setHold({ ...(h || {}), phase: mark || 'sent' })
-          clearHoldSoon()
-        } catch (e) {
-          // 连放行都失败 ⇒ 必须说出来（用户至少知道消息没发出去，可以手动再按一次）
-          setHold({ ...(h || {}), phase: 'error', reason: L('放行失败：','Release failed: ') + String((e && e.message) || e) })
-        }
-      }
-      /**
-       * 失败时的收场（用户 2026-09-21 报的缺陷："即使处在审查模式，拦截后仍会在几秒后自动把原文发送出去"）。
-       *
-       * 两条路径必须分开：
-       *   · **自动**：fail-open —— 按原文发出（0.5 auto 档的语义），并把原因留在面板上；
-       *   · **审查**：**绝不自动发送**。把失败原因摆在面板里，由用户自己点「按原文发出」或「重试」。
-       *     消息不会丢：草稿仍在输入框里（我们从头到尾没动它），面板就在旁边。
-       */
-      const settleFailure = (text, h, why) => {
-        if (permissionRef.current === 'review') {
-          const failed = { ...h, phase: 'error', reason: why }
-          holdRef.current = failed; setHold(failed)          // 面板停在 error 态：重试 / 按原文发出
-          return
-        }
-        releaseHold(text, { ...h, reason: why }, 'sent')
-      }
-
-      const beginHold = (text, via, deliveryMode = 'queue') => {
-        if (holdRef.current) return                        // 去重：同一次发送的第二条事件直接忽略
-        // 拦截计数**放在去重之后**：同一次发送可能同时命中 Enter 与 click（0.5 也要处理这件事，
-        // 见 0.5:443-453 的 `coalesced`）。放在事件处理函数里会让同一次发送**记两次**，
-        // "本会话已拦截 N 次"就变成了一个虚高的数字——界面上的数字不允许这样。
-        setInterceptCount((n) => n + 1)
-        const my = ++holdSeq.current                        // 这一轮的世代号
-        try { if (abortRef.current) abortRef.current.abort() } catch { /* 上一轮先断掉 */ }
-        const ac = (typeof AbortController === 'function') ? new AbortController() : null
-        abortRef.current = ac
-        const h = { text, via, deliveryMode: deliveryMode === 'steer' ? 'steer' : 'queue', t0: Date.now(), phase: 'optimizing', packet: '', chars: 0, ms: null, reason: null }
-        holdRef.current = h; setHold(h)
-        apiPost('/interpret', { sessionId, text }, ac ? { signal: ac.signal } : undefined).then((r) => {
-          if (my !== holdSeq.current) return                // ⚠ 过期世代：这一轮已被跳过/取消/重跑 ⇒ 结果丢弃
-          if (!r || r.ok !== true) {
-            settleFailure(text, h, reasonText((r && r.reason) || 'unknown'))
-            return
-          }
-          // P11 修复（2026-09-26）：token 用量挂在**结果**上。
-          // 进度面（prog）在离开 optimizing 那一刻就被清空，用量若只存那里，界面永远读不到。
-          const done = { ...h, phase: 'review', packet: r.packet || '', chars: r.chars || 0, ms: r.ms || null, unsourced: r.unsourced == null ? null : r.unsourced, route: r.route || null, edited: r.packet || '', usage: r.usage || null, usageTotal: (typeof r.usageTotal === 'number') ? r.usageTotal : null }
-          holdRef.current = done; setHold(done)
-          // 「自动」= 完成即发；「审查」= 等用户确认（0.5 §5 的权限语义）
-          if (permissionRef.current !== 'review') releaseHold(text, done, 'sent')
-        }, (e) => {
-          if (my !== holdSeq.current) return
-          settleFailure(text, h, reasonText((e && e.message) || e))
+      // ── Host pre-step 审查决议 ───────────────────────────────────────
+      // 浏览器不再拥有发送权：这里只把用户选择提交给正在 await 的 agent/pre-step。
+      const canArm = !!sessionId
+      const hostDecision = async (action, text) => {
+        const h = holdRef.current || hold
+        if (!h || !h.id || !sessionId) return { ok: false, reason: 'no-active-review' }
+        const r = await apiPost('/pre-step-review/decision', {
+          sessionId, id: h.id, action,
+          ...(text === undefined ? {} : { text }),
         })
+        if (!r || r.ok !== true) {
+          setHold((cur) => ({ ...(cur || h), reason: reasonText((r && r.reason) || 'unknown') }))
+          return r || { ok: false, reason: 'unknown' }
+        }
+        void refreshReview()
+        return r
       }
 
-      /**
-       * 「取消」（0.5 那颗 `‹ 回退` 真正干的事，用户 2026-09-21 指出我误解了它）：
-       * **中止这一轮优化、什么都不发**，草稿留在输入框里等用户接着改。
-       * 与「跳过并直接发送」的区别：跳过是"发，但不带包"；取消是"不发"。
-       */
-      const cancelHold = () => {
-        holdSeq.current += 1                                  // 让在飞的那次结果作废
-        try { if (abortRef.current) abortRef.current.abort() } catch { /* 断不掉也要作废世代 */ }
-        abortRef.current = null
-        setProg(null)                                         // 立刻收掉"还在跑"的观感（宿主侧同时会被中止）
-        holdRef.current = null
-        setHold(null)
-        // 用户 2026-09-21 更正（我第一次改过头了）：取消**不要清空用户输入的原话**——
-        // 他说的"不要留草稿"指的是**拦截态与那个隐藏弹窗的残留**，不是把用户打的字擦掉。
-        // 所以这里只清拦截残留（hold / 在飞请求 / window 桥），输入框原样保留。
-        try { const b = window.__PO06_HOLD__ || {}; if (sessionId) delete b[sessionId] } catch { /* 桥只是保险 */ }
-        setMsg({ kind: 'warn', text: L('已取消这一轮优化：消息没有发出，你输入的原话仍在输入框里', 'Cancelled: nothing was sent; your text is still in the box') })
+      const cancelHold = async () => {
+        const r = await hostDecision('cancel')
+        if (r && r.ok === true) {
+          setProg(null)
+          setMsg({ kind: 'warn', text: L('已取消发送：这条消息不会进入工作模型', 'Send cancelled: this message will not enter the working model') })
+        }
       }
-      /** 回退（用户 2026-09-21 要求）：把上一版注入的包放回来，并把新正文读回界面。
-       *  没有历史时**如实说没有**（不假装成功）；回退本身由宿主记账（`trigger:'packet-rollback'`）。 */
+
       const rollbackHold = async () => {
         const h = holdRef.current || hold
         const r = await apiPost('/rollback', { kind: 'packet', sessionId })
@@ -2116,57 +2011,48 @@ window.__ModuleLoader__.load({
           const g = await apiGet('/packet?session=' + encodeURIComponent(sessionId))
           if (g && typeof g.packet === 'string') text = g.packet
         } catch { /* 读不回来就保持原正文，并在下面说明 */ }
-        const next = {
-          ...(h || {}), packet: text, edited: text, chars: text.length,
+        setHold((cur) => ({
+          ...(cur || h || {}), edited: text, chars: text.length,
           reason: L('已回退到上一版包（还剩 ' + (r.remaining == null ? '?' : r.remaining) + ' 版可退）',
             'Rolled back to the previous packet (' + (r.remaining == null ? '?' : r.remaining) + ' more available)'),
-        }
-        holdRef.current = next; setHold(next)
+        }))
       }
 
-      const skipHold = () => {
-        const h = holdRef.current || hold || {}
-        if (!h.text) { holdRef.current = null; setHold(null); setProg(null); return }
-        holdSeq.current += 1                                 // ⚠ 跳过之后，在飞的那次解释结果必须作废
-        try { if (abortRef.current) abortRef.current.abort() } catch { /* 同上 */ }
-        abortRef.current = null
-        setProg(null)                                        // 立刻收掉"还在跑"的观感（不再等下一次刷新）
-        releaseHold(h.text, { ...h, phase: 'sent' }, 'skipped')
+      const skipHold = async () => {
+        setProg(null)
+        await hostDecision('skip')
       }
-      /** 审查确认：用户改过正文 ⇒ 先把改动写进"本轮注入的包"，再放行。 */
+
       const confirmHold = async () => {
         const h = holdRef.current || hold
         if (!h) return
         const edited = String(h.edited == null ? h.packet : h.edited)
-        if (edited !== h.packet) {
-          const r = await apiPost('/packet', { sessionId, text: edited })
-          if (!r || r.ok !== true) {
-            setHold({ ...h, phase: 'review', reason: L('改动没写进去：', 'Edit not applied: ') + reasonText(r && r.reason) })
-            return
-          }
-        }
-        releaseHold(h.text, { ...h, phase: 'sent' }, 'sent')
+        await hostDecision('confirm', edited)
       }
-      /** 「按原文发出」：清掉本轮包，再原样放行（用户明确不要这次的结果）。 */
+
       const sendOriginal = async () => {
-        const h = holdRef.current || hold
-        if (!h) return
-        await apiPost('/packet', { sessionId, text: '' })
-        releaseHold(h.text, { ...h, phase: 'sent' }, 'sent')
+        setProg(null)
+        await hostDecision('original')
       }
-      const regenHold = () => {
-        const h = holdRef.current || hold
-        if (!h) return
-        holdRef.current = null
-        beginHold(h.text, 'regen')
+
+      const regenHold = async () => {
+        setProg(null)
+        await hostDecision('regen')
       }
+
+      React.useEffect(() => {
+        // 审查期间切到关闭档时，按原文继续；不能让 Host 的 pre-step 永久等待。
+        if (!tierOff || !holdRef.current || !holdRef.current.id) return
+        void hostDecision('original')
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [tierOff, sessionId])
 
       // ── P11 浮层的两条时序（**只读 hold，绝不改拦截状态机**）────────────
       // ① 终结即留档：0.6 的 releaseHold 会在 1.6s 后把 hold 清空（clearHoldSoon），
       //    而 0.5 的结果在放行之后仍能在球里回看（foot-sent 的「已发送 · 仅供查看」）⇒ 自己留一份快照。
       React.useEffect(() => {
         if (!hold) return
-        const done = hold.phase === 'sent' || hold.phase === 'skipped' || hold.phase === 'error' || hold.phase === 'failed'
+        const done = hold.phase === 'sent' || hold.phase === 'skipped' || hold.phase === 'failed'
         if (!done) return
         ovLastRef.current = hold
         setOvLast(hold)
@@ -2189,11 +2075,10 @@ window.__ModuleLoader__.load({
         }
       }, [hold])
 
-      /** 「重新生成」：活的 hold 交给既有 regenHold；已经终结（hold 已被清）的那份用既有 beginHold 重跑。 */
+      /** 重新生成只作用于仍在等待的 Host pre-step；已发送历史不会被偷偷重发。 */
       const doRegen = () => {
-        if (hold) { regenHold(); return }
-        const h = ovLastRef.current
-        if (h && h.text) beginHold(h.text, 'regen')
+        if (hold && hold.id) { void regenHold(); return }
+        setMsg({ kind: 'warn', text: L('这条消息已经结束，不能重新拦截发送', 'This message has already finished and cannot be intercepted again') })
       }
       /** 收起为球（0.5:1473-1478 collapseToBall）。⚠ 与 0.5 有意不同的一处：0.5 在"没有产出"时
        *  连球都不留；这里只要**还有一次拦截挂着**就留球（优化中收起也有球，标着"优化中"），
@@ -2214,17 +2099,6 @@ window.__ModuleLoader__.load({
       }
       /** foot-sent 的「关闭」（0.5:1653 close-sent）：浮层与球一起收掉。 */
       const closeSent = () => { setOvOpen(false); setOvBall(null) }
-
-      // 重挂（切会话来回）后把 holdRef 也接回桥上的那一份——否则界面显示了面板，逻辑却以为"没在拦"；
-      // 并**订阅**后续变化（issue #19）：切走期间跑完的那一轮，回来要能看见它的结果。
-      React.useEffect(() => {
-        const saved = holdBridgeRead(sessionId)
-        if (saved && !holdRef.current) holdRef.current = saved
-        return holdBridgeOn(sessionId, (value) => {
-          holdRef.current = value
-          _setHold(value)
-        })
-      }, [sessionId])
 
       // 计时器：只在"优化中"时走（用户要看得见已经等了多久，因为**不设超时**）
       React.useEffect(() => {
@@ -2272,103 +2146,6 @@ window.__ModuleLoader__.load({
         const t = window.setInterval(pull, 25)
         return () => { alive = false; window.clearInterval(t) }
       }, [hold, sessionId])
-
-      // 拦截监听：**捕获阶段挂在 window 上**（早于 React 根容器与编辑器自身处理器；0.5:3095）
-      React.useEffect(() => {
-        if (!canArm || tierOff || !data) return undefined       // 关闭档 / 状态未知 / 没有放行通道 ⇒ 完全不拦
-        const sendLabels = new Set(SEND_FALLBACK_LABELS)
-        const steerLabels = steerLabelsNow()
-        const queueLabels = queueLabelsNow()
-        const stopLabels = new Set(['停止生成', 'Stop generating'])
-        // 诊断：**监听器到底挂上没有 / 判定卡在哪一条**，都必须在真机上看得见。
-        // 第一版只写了"拦截计数"，于是真机上次秒发现"消息照发、计数还是 0"却无从判断是哪一环——
-        // 这里把"看见了几个事件"和"最后一次为什么放行"都暴露成标记（有事件而计数不动 = 判定问题，
-        // 连事件都没有 = 监听器没挂上，两者的修法完全不同）。
-        let seen = 0
-        const markSeen = (why) => {
-          seen += 1
-          try {
-            const el = rootRef.current
-            if (el && el.setAttribute) { el.setAttribute('data-po06-seen', String(seen)); el.setAttribute('data-po06-lastpass', why) }
-          } catch { /* 诊断不影响主流程 */ }
-        }
-        const loadLabels = () => {
-          try {
-            const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
-            if (!bind) return
-            for (const k of SEND_KEYS) { const v = bind(k); if (typeof v === 'string' && v && v !== k) { sendLabels.add(v); if (k === 'input.send.steer') steerLabels.add(v); if (k === 'input.send.queue') queueLabels.add(v) } }
-            const stop = bind('input.stop'); if (typeof stop === 'string' && stop && stop !== 'input.stop') stopLabels.add(stop)
-          } catch { /* 字典不可用 ⇒ 点击路径走结构兜底 */ }
-        }
-        loadLabels()
-        const draftNow = () => composerDraft(composerCard(rootRef.current)).trim()
-        const wantKey = (e) => {
-          if (!isActiveInstance()) return 'stale-instance'
-          if (e.key !== 'Enter') return 'not-enter'
-          if (e.shiftKey || e.altKey || (e.ctrlKey && e.metaKey)
-            || (typeof e.getModifierState === 'function' && e.getModifierState('AltGraph'))) return 'unsupported-modifier'
-          if (e.isComposing === true || e.keyCode === 229) return 'composing'
-          if (e.repeat === true) return 'repeat'
-          const card = composerCard(rootRef.current)
-          if (!card) return 'no-card'
-          if (!focusInComposer(card, e.target)) return 'focus-outside'
-          const t = draftNow()
-          if (!t) return 'empty-draft'
-          // 斜杠命令默认交还官方；**只有名单内且已注册**的命令才继续走拦截（0.8）。
-          if (t.startsWith('/') && !slashAllowedDraft(t)) return 'slash-command'
-          return null
-        }
-        const wantClick = (btn) => {
-          if (!isActiveInstance()) return 'stale-instance'
-          if (!btn) return 'no-button'
-          if (btn.closest && btn.closest('[data-po06]')) return 'our-own-button'   // 我们自己的按钮永不吞
-          const card = composerCard(rootRef.current)
-          if (!card) return 'no-card'
-          if (!card.contains(btn)) return 'button-outside-card'
-          if (!draftNow()) return 'empty-draft'                                    // 空草稿时主按钮是"停止生成"，绝不能吞
-          const label = btn.getAttribute('aria-label')
-          if (label && stopLabels.has(label)) return 'stop-button'
-          return (label && sendLabels.has(label)) ? null : 'not-send-button'
-        }
-        const onKey = (e) => {
-          if (nativeReleaseBypass.current > 0) {
-            nativeReleaseBypass.current -= 1
-            markSeen('key:native-release')
-            return
-          }
-          const why = wantKey(e)
-          if (why) { markSeen('key:' + why); return }
-          e.preventDefault(); e.stopPropagation()
-          if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation()
-          markSeen('key:intercepted')
-          // 普通 Enter 跟主按钮；Ctrl/Cmd+Enter 按 DSH 官方语义走它的互补 Queue/Steer。
-          const card = composerCard(rootRef.current)
-          const accelerated = e.ctrlKey === true || e.metaKey === true
-          beginHold(draftNow(), accelerated ? 'key-accelerated' : 'key',
-            keyDeliveryMode(card, steerLabels, queueLabels, accelerated))
-        }
-        const onClick = (e) => {
-          if (nativeReleaseBypass.current > 0) {
-            nativeReleaseBypass.current -= 1
-            markSeen('click:native-release')
-            return
-          }
-          const btn = e.target && e.target.closest ? e.target.closest('button') : null
-          const why = wantClick(btn)
-          if (why) { markSeen('click:' + why); return }
-          e.preventDefault(); e.stopPropagation()
-          if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation()
-          markSeen('click:intercepted')
-          beginHold(draftNow(), 'click', sendModeForButton(btn, steerLabels))
-        }
-        window.addEventListener('keydown', onKey, true)
-        window.addEventListener('click', onClick, true)
-        return () => {
-          window.removeEventListener('keydown', onKey, true)
-          window.removeEventListener('click', onClick, true)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [canArm, tierOff, !!data, sessionId])
 
       // ── ② 模型清单（可能 35+ 项 ⇒ 用 <select>，**不要**平铺成一排按钮）
       const cat = (catalog.data && typeof catalog.data === 'object') ? catalog.data : {}
@@ -2490,8 +2267,7 @@ window.__ModuleLoader__.load({
         // 控件栏分两层：第一行放"设定类"，第二行放"范围类"。
         // 外层靠上对齐（**不要**用 alignSelf:'flex-end'，那会被输入区的发送按钮顶上去、底部留空）。
         h('div', { ...themeAttrs(), 'data-po06': 'bar', ref: rootRef,
-          // 拦截能不能武装，取决于宿主有没有给 `inputActions`——把它做成**真机可读的标记**，
-          // 免得"以为在拦、其实没拦"（本项目的头号失败形态）。
+          // 真机诊断：1 表示当前有会话、Host pre-step 路径可被使用；不再表示 inputActions/DOM 劫持。
           'data-po06-actions': canArm ? '1' : '0',
           'data-po06-intercepts': String(interceptCount),
           // 正在拦截 ⇒ 状态灯呼吸（见注入样式里那条 `[data-po06="bar"][data-po06-busy="1"]` 规则）。
@@ -2752,14 +2528,13 @@ window.__ModuleLoader__.load({
         //   · `hold` 活着 ⇒ 显示它（拦截现场）
         //   · hold 已被 0.6 的 clearHoldSoon 清掉、而面板还开着 ⇒ 显示最后那一份快照（只读回看）
         shown ? h(InterceptPanel, {
-          hold: shown, phase: shown.phase, permission, tier, count: interceptCount,
+          hold: shown, phase: shown.phase, permission: shown.permission || permission, tier, count: interceptCount,
           prog: prog, pos: ovGeom.pos, size: ovGeom.size,
           onMove: (p) => setOvGeom((g) => ({ ...g, pos: p })),
           onResize: (z) => setOvGeom((g) => ({ ...g, size: z })),
           onEdit: (e) => {
             // 审查态里用户改的那份就是**本轮注入的包**（既有逻辑不变，只是搬到新面板里）
             const v = e.target.value
-            holdRef.current = { ...(holdRef.current || shown), edited: v }
             setHold((x) => ({ ...(x || shown), edited: v }))
           },
           onConfirm: confirmHold,      // 确认提交
@@ -3544,8 +3319,6 @@ const react = require("react")
         overlayZIndex: OV_Z,
         composerRegion, clampOvPos, clampOvSize, defaultOvPos, defaultBallPos,
         ovReflowWatch, ovReflowAll, EDITABLE_SEL,
-        holdBridgeRead, holdBridgeWrite, holdBridgeOn,
-        sendModeForButton, keyDeliveryMode, steerLabelsNow, queueLabelsNow, dispatchAcceleratedSubmit,
         themeTokens: THEME_TOKENS,
         tokenVars: TOKEN_VARS,
         themeIsDark,
