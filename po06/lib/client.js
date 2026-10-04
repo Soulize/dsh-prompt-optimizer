@@ -30,33 +30,6 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-po06'
     const API = '/po06/api'
-    // ── 拦截态的**跨挂载小仓库**（issue #19）───────────────────────────────
-    // 控件栏是 per-session 挂载的：切到别的会话再回来会**重挂**，组件内的 hold 归零。
-    // 原先的做法是把 hold 顺手写一份到 `window.__PO06_HOLD__[sessionId]`，但那只在**挂载时**读一次；
-    // 于是"切走 → 解释在后台跑完 → 切回"这条路径上，完成结果是写进了桥、却没有任何东西再读它 ——
-    // 用户看到的就是"这一轮没有继续，也没有产出"。
-    // 现在把桥收敛成三个函数：写入即广播，订阅者按 sessionId 认领。
-    // 它**只按会话隔离**（绝不把 A 会话的拦截态显示到 B 会话），且桥不可用时静默降级（不影响本轮）。
-    const HOLD_BRIDGE_EVENT = NS + ':hold'
-    function holdBridgeRead(sessionId) {
-      try { return (window.__PO06_HOLD__ || {})[sessionId] || null } catch { return null }
-    }
-    function holdBridgeWrite(sessionId, value) {
-      if (!sessionId) return
-      try {
-        const b = window.__PO06_HOLD__ || (window.__PO06_HOLD__ = {})
-        if (value) b[sessionId] = value
-        else delete b[sessionId]
-      } catch { return }        // 桥写不进去就不广播（否则订阅者会读到旧值）
-      try { window.dispatchEvent(new CustomEvent(HOLD_BRIDGE_EVENT, { detail: { sessionId } })) } catch { /* 老环境没有 CustomEvent：本组件自己的状态仍然可用 */ }
-    }
-    /** 订阅某会话的拦截态变化；返回退订函数（挂载期用，卸载必须退订）。 */
-    function holdBridgeOn(sessionId, cb) {
-      const on = (e) => { if (e && e.detail && e.detail.sessionId === sessionId) cb(holdBridgeRead(sessionId)) }
-      try { window.addEventListener(HOLD_BRIDGE_EVENT, on) } catch { return () => {} }
-      return () => { try { window.removeEventListener(HOLD_BRIDGE_EVENT, on) } catch { /* 退不掉也不影响本轮 */ } }
-    }
-
     const WRITE_HEADERS = { 'content-type': 'application/json', 'x-po06': '1' }
     const INSTANCE_TOKEN = NS + '#' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
 
@@ -399,6 +372,11 @@ window.__ModuleLoader__.load({
     const useStatus = (sessionId) => usePoll(React.useCallback(
       () => apiGet('/status' + (sessionId ? ('?session=' + encodeURIComponent(sessionId)) : '')),
       [sessionId]), 15000)
+    const usePreStepReview = (sessionId) => usePoll(React.useCallback(
+      () => sessionId
+        ? apiGet('/pre-step-review?session=' + encodeURIComponent(sessionId))
+        : Promise.resolve({ ok: true, active: false, run: null }),
+      [sessionId]), 250)
     const useTurns = (n) => usePoll(React.useCallback(() => apiGet('/turns?limit=' + n), [n]), 15000)
     const useState_ = (sid) => usePoll(
       React.useCallback(() => (sid ? apiGet('/state?session=' + encodeURIComponent(sid)) : Promise.resolve(null)), [sid]),
@@ -1806,79 +1784,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ── P11 · 前置拦截（用户要的"第一轮发，第一轮就回"）──────────────────
-    // 机制**逐条照抄 0.5**（行号见 `po06/P11-INTERCEPT-PLAN.md`，源 = 0.5.2 线 `lib/client.js`）：
-    //   捕获阶段监听 Enter/click（0.5:3095/3121/3152）· 判据读**此刻编辑器里真实的字**（0.5:458-465）
-    //   发送按钮 = 本地化 aria-label 白名单 + "卡片内最后一个按钮"兜底（0.5:483-515）
-    //   `preventDefault + stopPropagation` 接管、`inputActions` 放行（0.5:1285）· 草稿被清则显式写回（0.5:1203）
-    //   同一次发送可能同时命中 Enter 与 click ⇒ 去重（0.5:443-453）· 档位「关闭」⇒ 完全不拦（0.5:2316）
-    //   fail-open：拿不到包就**按原文发出**（0.5 的 auto 档语义）
-    // **唯一的新轮子**：0.5 的解释层在客户端、我们的在宿主 ⇒ 拦下后要 POST /interpret 让宿主先算。
-    const SEND_KEYS = ['input.send', 'input.send.queue', 'input.send.steer']
-    const STEER_FALLBACK_LABELS = Object.freeze(['插话发送', 'Steer message'])
-    const QUEUE_FALLBACK_LABELS = Object.freeze(['排队发送', 'Queue message'])
-    const SEND_FALLBACK_LABELS = Object.freeze(['发送消息', 'Send message', ...QUEUE_FALLBACK_LABELS, ...STEER_FALLBACK_LABELS])
-    function steerLabelsNow() {
-      const out = new Set(STEER_FALLBACK_LABELS)
-      try {
-        const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
-        if (bind) {
-          const v = bind('input.send.steer')
-          if (typeof v === 'string' && v && v !== 'input.send.steer') out.add(v)
-        }
-      } catch { /* fallback labels remain */ }
-      return out
-    }
-    function queueLabelsNow() {
-      const out = new Set(QUEUE_FALLBACK_LABELS)
-      try {
-        const bind = typeof LOCALE_BIND === 'function' ? LOCALE_BIND('conversation') : null
-        if (bind) {
-          const v = bind('input.send.queue')
-          if (typeof v === 'string' && v && v !== 'input.send.queue') out.add(v)
-        }
-      } catch { /* fallback labels remain */ }
-      return out
-    }
-    const sendModeForButton = (btn, steerLabels) => {
-      const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
-      return label && steerLabels && steerLabels.has(label) ? 'steer' : 'queue'
-    }
-    const keyDeliveryMode = (card, steerLabels, queueLabels, accelerated) => {
-      const buttons = composerButtons(card).filter((btn) => !btn.disabled)
-      const hasSteer = buttons.some((btn) => {
-        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
-        return label && steerLabels.has(label)
-      })
-      const hasQueue = buttons.some((btn) => {
-        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
-        return label && queueLabels.has(label)
-      })
-      if (!accelerated) return hasSteer ? 'steer' : 'queue'
-      // DSH 官方 resolveSubmitMode：运行中 accelerated 是普通 Enter 的互补；
-      // 非运行态主按钮是普通“发送消息”，既无 steer 也无 queue 专用标签 ⇒ 仍是 queue。
-      if (hasSteer) return 'queue'
-      if (hasQueue) return 'steer'
-      return 'queue'
-    }
-    const currentSteerButton = (card) => {
-      const labels = steerLabelsNow()
-      return composerButtons(card).find((btn) => {
-        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
-        return !btn.disabled && labels.has(label)
-      }) || null
-    }
-    const currentQueueButton = (card) => {
-      const labels = queueLabelsNow()
-      return composerButtons(card).find((btn) => {
-        const label = btn && btn.getAttribute ? (btn.getAttribute('aria-label') || '') : ''
-        return !btn.disabled && labels.has(label)
-      }) || null
-    }
-
-    /** 从**我们自己渲染的节点**往上找输入卡片（不用产品类名/选择器）；找不到 = 不在会话页 ⇒ 一律放行。 */
-    // ⚠ 选择器要**容错**：`contenteditable` 的合法写法不止 "true"（"" 与 "plaintext-only" 同样可编辑）。
-    // 原先只认 `[contenteditable="true"]` ⇒ 宿主换个写法就量不到卡片、退回视口、浮层重新压到侧栏上。
+    // ── 输入卡片几何定位 ─────────────────────────────────────────────
+    // 只用于把本插件浮层限制在会话列内；不监听键盘、不识别发送按钮、不触发提交。
     const EDITABLE_SEL = '[contenteditable]:not([contenteditable="false"])'
     function composerCard(node) {
       let el = node
@@ -1887,40 +1794,6 @@ window.__ModuleLoader__.load({
         el = el.parentElement
       }
       return null
-    }
-    function composerDraft(card) {
-      const ed = card ? card.querySelector(EDITABLE_SEL) : null
-      if (!ed) return ''
-      const raw = (typeof ed.innerText === 'string' && ed.innerText.length > 0) ? ed.innerText : (ed.textContent || '')
-      return String(raw).replace(/\u00a0/g, ' ')
-    }
-    function dispatchAcceleratedSubmit(card) {
-      const ed = card ? card.querySelector(EDITABLE_SEL) : null
-      if (!ed || typeof ed.dispatchEvent !== 'function' || typeof KeyboardEvent !== 'function') return false
-      try {
-        ed.dispatchEvent(new KeyboardEvent('keydown', {
-          key: 'Enter', code: 'Enter', ctrlKey: true, bubbles: true, cancelable: true,
-        }))
-        return true
-      } catch {
-        return false
-      }
-    }
-    const composerButtons = (card) => (card ? Array.from(card.querySelectorAll('button')) : [])
-    /**
-     * 这次按键/点击是不是发生在**输入卡片里**。
-     * 判据优先看**事件目标**（`target`）——它才是"这一次击键真正发生在哪"；
-     * 只有拿不到 target 时才退回 `document.activeElement`（0.5 只用后者）。
-     * 为什么改：真机探针实测（headless 窗口未获得焦点时 `document.activeElement` 恒为 body）
-     * 会**永远判为"焦点不在输入区"⇒ 一次都拦不住**；而事件目标是客观事实，不受窗口焦点影响。
-     * 副作用是更好的：设置页/重命名框里的 Enter 目标不在卡片里 ⇒ 照样交还官方。
-     */
-    function focusInComposer(card, target) {
-      const a = (card && target && card.contains(target)) ? target : document.activeElement
-      if (!card || !a || !card.contains(a)) return false
-      if (a.closest && a.closest('button')) return false
-      if (a.closest && a.closest('[data-po06="panel"], [data-po06="help-pop"], [data-po06="intercept"]')) return false
-      return true
     }
 
     // ── ① 输入区左侧的控件栏（0.5 的操作形态）─────────────────────────
@@ -1935,10 +1808,10 @@ window.__ModuleLoader__.load({
     //     否则会把"文件里没写"变成"显式 false"，那是把"未设置"写成了"用户选过关"。
     //   · **保存后就重新拉 /status**（界面与后端一致），失败就在控件旁给一行短错误，不弹窗、不静默。
     function ControlBar(props) {
-      // 宿主按**标准 props** 注入：`sessionId`（会话作用域）与 `inputActions`（放行通道，见 slots.d.ts:201-255）。
-      // ⚠ `inputActions` 拿不到 ⇒ **绝不拦截**（拦下却没有放行通道 = 把用户的消息吞掉）。
-      const { sessionId, inputActions } = props || {}
+      // 提交链完全归 DSH；本组件只读取会话身份、设置和 Host 侧 pre-step 审查状态。
+      const { sessionId } = props || {}
       const [status, refreshStatus] = useStatus(sessionId)
+      const [reviewStatus, refreshReview] = usePreStepReview(sessionId)
       const [configScope, setConfigScope] = React.useState(() => sessionId ? 'session' : 'global')
       React.useEffect(() => {
         if (!sessionId && configScope !== 'global') setConfigScope('global')
@@ -1980,37 +1853,47 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = React.useState(null)
       const [failTick, setFailTick] = React.useState(0)
       const [helpOpen, setHelpOpen] = React.useState(false)
-      // P11 拦截态：{text, via, t0, phase, packet, chars, ms, reason, edited}
-      // ⚠ 用户实测（2026-09-21）：**切到别的会话再回来，拦截面板就没了**。
-      // 原因：控件栏是 per-session 挂载的，切会话会重挂 ⇒ 组件内的 hold 归零。
-      // 而"消息还被我拦着"这件事**必须跨会话切换活下来** ⇒ hold 同时写一份到 window 上，
-      // 重挂时按 sessionId 取回（只认同一会话，绝不把 A 会话的拦截态显示到 B 会话）。
-      const [hold, _setHold] = React.useState(() => holdBridgeRead(sessionId))
-      const setHold = React.useCallback((v) => {
-        _setHold(v)
-        holdBridgeWrite(sessionId, v)   // 写桥即广播（issue #19）：别的挂载/后台完成的那一份也能被认领
-      }, [sessionId])
-      const [tick, setTick] = React.useState(0)        // 只用于"已用 N 秒"重新渲染
-      useLocaleLive()                                  // 语言是活的：DSH 里切语言 ⇒ 立刻换文案
-      useThemeLive()                                   // 主题也是活的：切深浅色 ⇒ 立刻换配色
-      const [interceptCount, setInterceptCount] = React.useState(0)   // 本会话拦截次数（0.5 也有这个计数）
-      const [prog, setProg] = React.useState(null)                    // P11：解释进度（阶段 + 流式正文尾部）
-      // P11 浮层的**呈现状态**（0.5 把这两态放在 store.overlay / store.ball；0.6 不引入全局 store，
-      // 用组件状态即可，但语义照抄：面板 = 拦截现场，球 = 放行之后仍可回看的那一份）。
+      // Host 的 agent/pre-step 是拦截状态唯一真相。客户端只镜像用于呈现；
+      // 切会话/重挂后重新 GET 即恢复，不再依赖 window 级状态。
+      const holdRef = React.useRef(null)
+      const [hold, _setHold] = React.useState(null)
+      const setHold = React.useCallback((next) => {
+        const prev = holdRef.current
+        const value = typeof next === 'function' ? next(prev) : next
+        holdRef.current = value
+        _setHold(value)
+        return value
+      }, [])
+      const seenRunIdRef = React.useRef(null)
+      const [tick, setTick] = React.useState(0)
+      useLocaleLive()
+      useThemeLive()
+      const [interceptCount, setInterceptCount] = React.useState(0)
+      const [prog, setProg] = React.useState(null)
       const [ovOpen, setOvOpen] = React.useState(false)
       const [ovGeom, setOvGeom] = React.useState({ pos: null, size: { w: null, h: null } })
-      const [ovBall, setOvBall] = React.useState(null)  // {visible, pos, sent, phase}
-      const [ovLast, setOvLast] = React.useState(null)  // 最近一次**已终结**的拦截（0.5 球里存的那份 run）
+      const [ovBall, setOvBall] = React.useState(null)
+      const [ovLast, setOvLast] = React.useState(null)
       const ovLastRef = React.useRef(null)
       const rootRef = React.useRef(null)
-      const holdRef = React.useRef(null)               // 去重要用 ref（同一个事件循环里 state 还没生效）
-      // P11：**在飞请求的世代号**。跳过 / 取消 / 重新生成都会推进它，
-      // 于是"已经作废的那次解释"回来时写不进界面（真机缺陷：跳过之后过一会儿又弹出优化结果）。
-      const holdSeq = React.useRef(0)
-      const abortRef = React.useRef(null)
-      const canArmRef = React.useRef(false)
-      // native steer 放行的一次性旁路：只给 releaseHold() 自己触发的 DSH 原生 click 使用。
-      const nativeReleaseBypass = React.useRef(0)
+
+      React.useEffect(() => {
+        const row = reviewStatus.data && reviewStatus.data.active ? reviewStatus.data.run : null
+        if (!row || !row.id) {
+          if (holdRef.current) setHold(null)
+          return
+        }
+        const cur = holdRef.current
+        const same = !!(cur && cur.id === row.id)
+        const keepEdit = same && (row.phase === 'review' || row.phase === 'error') && cur.edited != null
+        const next = { ...row, edited: keepEdit ? cur.edited : row.edited }
+        if (seenRunIdRef.current !== row.id) {
+          seenRunIdRef.current = row.id
+          setInterceptCount((n) => n + 1)
+        }
+        setHold(next)
+      }, [reviewStatus.data, sessionId, setHold])
+
       const [catalog, reloadCatalog] = useOnce(React.useCallback(() => apiGet('/models'), []))
       // 只在打开时才去读帮助（关着的时候不发请求）。
       // **把当前界面语言带上去**（用户 2026-09-22："英文 UI 适配应与 dsh 的语言对应"）：
