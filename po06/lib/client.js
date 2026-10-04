@@ -2074,7 +2074,11 @@ window.__ModuleLoader__.load({
 
       /** 重新生成只作用于仍在等待的 Host pre-step；已发送历史不会被偷偷重发。 */
       const doRegen = () => {
-        if (hold && hold.id) { void regenHold(); return }
+        const h = holdRef.current || hold
+        if (h && h.id && (h.phase === 'optimizing' || h.phase === 'review' || h.phase === 'error')) {
+          void regenHold()
+          return
+        }
         setMsg({ kind: 'warn', text: L('这条消息已经结束，不能重新拦截发送', 'This message has already finished and cannot be intercepted again') })
       }
       /** 收起为球（0.5:1473-1478 collapseToBall）。⚠ 与 0.5 有意不同的一处：0.5 在"没有产出"时
