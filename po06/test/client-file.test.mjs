@@ -334,7 +334,7 @@ t('P11 前置拦截：Host agent/pre-step 拥有发送时序，客户端只负�
   for (const forbidden of [
     'inputActions.submit', 'nativeReleaseBypass', 'dispatchAcceleratedSubmit',
     'sendModeForButton', 'keyDeliveryMode', 'steerLabelsNow', 'queueLabelsNow',
-    'stopImmediatePropagation', "addEventListener('keydown', onKey, true)",
+    'stopImmediatePropagation', "markSeen('key:intercepted')", 'wantKey(e)',
     "addEventListener('click', onClick, true)", "apiPost('/interpret'",
   ]) {
     ok(!src.includes(forbidden), '客户端不得再包含旧发送劫持：' + forbidden)
