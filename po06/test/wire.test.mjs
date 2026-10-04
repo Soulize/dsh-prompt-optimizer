@@ -475,6 +475,9 @@ await ta('EV-0143：po06-prompt.md 覆盖生效（解释层 system 用它，不�
     const s = fakeSession('session-ev0143-prompt', ctx.projections)
     // 闸门放行（与本用例无关；夹具里首次判定会停在 decision-pending，见 4a 那条）
     mod.adapter.enableGate.set('session-ev0143-prompt', { enabled: true, code: 'test-forced-enabled', reason: '单测放行' })
+    // pre-step 发生在“当前消息进入 session/event”之前；要验证会话上下文追加，
+    // 先喂一条已经发生过的历史消息，再跑本轮 pre-step。
+    emit(ctx, s, userEvent('上一轮用户消息', 'm-prev'))
     emit(ctx, s, headerEvent())
 
     await enterStep(ctx, s, userEvent(USER_TEXT, 'm-prompt'))
@@ -929,15 +932,17 @@ t('ADR-0087：投递来源必须是生产者自报的 kind（0.1.7 的 v4 准入
 // ── 5. 静态守卫：生产调用点必须在（防"注释与代码一起过期"）────────────
 t('index.js 里存在生产调用点（A15 反回归的静态检查）', () => {
   const src = readFileSync(join(HERE, '..', 'lib', 'index.js'), 'utf8')
-  ok(/ctx\.on\('session\/event'/.test(src), '必须有 session/event 订阅')
-  ok(/defer\(\(\) => runProductionInput\(/.test(src),
-    '订阅里必须调用 runProductionInput，且**必须经 defer 推迟**')
+  ok(/ctx\.on\('agent\/pre-step'/.test(src), '生产唯一触发点必须是 agent/pre-step')
+  ok(/preStepController\.handle\(payload, next\)/.test(src),
+    'agent/pre-step 必须把 payload/next 交给 Host 控制器')
+  ok(/runInterceptInput\(ctx, \{ \.\.\.p, trigger: 'pre-step' \}\)/.test(src),
+    'pre-step 优化必须进入 runInterceptInput')
   ok(/adapter\.handleInput\(/.test(src), 'runProductionInput 必须调用 adapter.handleInput')
-  ok(/isRealUserInput\(/.test(src), '必须先过滤来源（防自激循环）')
-  // 重入禁令：在 session/event 派发窗口里同步 append 会被宿主拒绝（EV-0080）
-  ok(/function defer\(/.test(src), '必须有 defer 帮助函数')
+  ok(/role: 'observe-only'/.test(src), 'session/event 必须只观察，不得继续承担生产触发')
+  ok(!/model-observed-catchup/.test(src), '不得保留旧的 request/header 补跑路径')
+  ok(!/defer\(\(\) => runProductionInput\(/.test(src), '不得保留旧 session/event defer 生产触发')
   const selfcheckIdx = src.indexOf('if (SELF_CHECK)')
-  const callIdx = src.indexOf('defer(() => runProductionInput(')
+  const callIdx = src.indexOf("ctx.on('agent/pre-step'")
   ok(callIdx > 0, '生产调用点必须存在')
   ok(selfcheckIdx === -1 || callIdx < selfcheckIdx,
     '生产调用点必须在自检分支**之外/之前**（否则又变成只有自检才会跑）')
