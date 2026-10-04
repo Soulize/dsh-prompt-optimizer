@@ -262,12 +262,14 @@ function readTextSafe(path) {
  *                         不传 = 本 profile 不支持 ⇒ `/interpret` 如实回 501
  * @param opts.setPacket   P11 审查态里用户改过的正文 → **本轮注入的包**（`({sessionId, text}) => {ok, chars}`）；
  *                         不传 ⇒ `/packet` 如实回 501
+ * @param opts.preStepState Host 侧 agent/pre-step 正在等待的优化/审查状态（按 sessionId 查询）。
+ * @param opts.preStepDecision 提交 confirm/original/skip/regen/cancel 决议；不负责重新发送消息。
  * @param opts.onSettingsWritten 设置**刚写盘**后的钩子（宿主拿它作废政策缓存、按新档位清理已注入的包、
  *                         作废启用闸门）。真机 2026-09-22：拨到「关闭」档后旧包仍在注入 —— 只写盘不通知，
  *                         宿主就不知道政策变了。返回值原样带回给界面（诊断用）。
  * @param opts.now         注入时钟（测试用）
  */
-export function createControlHandler({ home, stateDir, ledgerPath, version = null, resolveEfforts = null, sessionModel = null, listModels = async () => ({ models: [], problems: [] }), listTools = null, toolState = null, now = () => Date.now(), help = {}, interpret = null, setPacket = null, progress = null, advisorProgress = null, rollbackPacket = null, getPacket = null, onSettingsWritten = null, gateSummary = null, registeredCommands = null, advisorStageStatus = null } = {}) {
+export function createControlHandler({ home, stateDir, ledgerPath, version = null, resolveEfforts = null, sessionModel = null, listModels = async () => ({ models: [], problems: [] }), listTools = null, toolState = null, now = () => Date.now(), help = {}, interpret = null, setPacket = null, progress = null, preStepState = null, preStepDecision = null, advisorProgress = null, rollbackPacket = null, getPacket = null, onSettingsWritten = null, gateSummary = null, registeredCommands = null, advisorStageStatus = null } = {}) {
   const H = String(home)
   const cfgPath = join(H, 'po06.json')
   const ledger = ledgerPath || join(H, 'po06-wire.jsonl')
@@ -541,6 +543,31 @@ export function createControlHandler({ home, stateDir, ledgerPath, version = nul
         const v = body.value || {}
         const r = writePrompt({ home: H, text: v.text, reset: v.reset === true, undo: v.undo === true, now: now() })
         return send(r.ok ? 200 : 400, { ok: r.ok, reason: r.reason || null, backup: r.backup || null, path: r.path })
+      }
+      if (method === 'GET' && path === API_PREFIX + '/pre-step-review') {
+        // Host 才是拦截状态真相。浏览器只读取，不观察 Enter/click，也不拥有发送时序。
+        const sid = String(query.get('session') || '').trim()
+        if (!sid) return send(400, { ok: false, reason: 'session-required' })
+        const state = typeof preStepState === 'function'
+          ? preStepState(sid)
+          : { active: false, run: null }
+        return send(200, { ok: true, ...(state && typeof state === 'object' ? state : { active: false, run: null }) })
+      }
+      if (method === 'POST' && path === API_PREFIX + '/pre-step-review/decision') {
+        const body = await readBody(req)
+        if (!body.ok) return send(400, { ok: false, reason: body.reason })
+        if (typeof preStepDecision !== 'function') {
+          return send(501, { ok: false, reason: 'pre-step-unavailable' })
+        }
+        const v = body.value || {}
+        const out = await preStepDecision({
+          sessionId: String(v.sessionId || ''),
+          id: v.id == null ? null : String(v.id),
+          action: String(v.action || ''),
+          ...(v.text === undefined ? {} : { text: String(v.text) }),
+        })
+        const result = out && typeof out === 'object' ? out : { ok: false, reason: 'bad-hook-result' }
+        return send(result.ok === true ? 200 : 400, result)
       }
       if (method === 'POST' && path === API_PREFIX + '/interpret') {
         // P11：前置拦截的按需解释（"第一轮发，第一轮就回"）。**可能跑 20–60 秒**——这是设计好的等待，
