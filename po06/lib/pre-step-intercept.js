@@ -69,6 +69,7 @@ export function createPreStepInterceptController({
   setPacket,
   clearPacket,
   readProgress,
+  onBypass,
   now = () => Date.now(),
   terminalTtlMs = 1600,
 } = {}) {
@@ -247,6 +248,15 @@ export function createPreStepInterceptController({
     try { policy = readPolicy(sid) } catch { return downstream }
     if (!policy || policy.injectPacket !== true) {
       clearRunPacket(sid, 'pre-step:assist-off')
+      try {
+        if (typeof onBypass === 'function') onBypass({
+          sessionId: sid,
+          text: hit.text,
+          messageId: hit.message && hit.message.id != null ? String(hit.message.id) : null,
+          reason: 'assist-off',
+          policy: policy || null,
+        })
+      } catch { /* diagnostics must never block the user's message */ }
       return downstream
     }
 
