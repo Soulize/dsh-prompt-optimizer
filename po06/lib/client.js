@@ -1557,7 +1557,7 @@ window.__ModuleLoader__.load({
             L('这一轮不注入优化包，按你的原文发出（0.6 从不改写你的原话，能丢的只有包）',
               'Inject nothing this round and send your original text (0.6 never rewrites your words — only the packet can be dropped)')),
           btn({ 'data-po06': 'intercept-cancel' }, L('取消发送', 'Cancel send'), props.onCancel, 'ghost',
-            L('取消这条已被 DSH 接收但尚未进入工作模型的消息；不会回填成输入框草稿',
+            L('取消这条已被 DSH 接收但尚未进入工作模型的消息；不会保留为输入框草稿',
               'Cancel this message after DSH admission but before it enters the working model; it is not restored to the composer')),
           btn({ 'data-po06': 'intercept-confirm' }, L('确认提交', 'Confirm & send'), props.onConfirm, 'primary',
             L('把上面这份包作为本轮注入的内容，连同你的原文一起发出', 'Inject the packet above for this round, together with your original message')),
@@ -1601,7 +1601,7 @@ window.__ModuleLoader__.load({
               btn({ 'data-po06': 'intercept-skip' }, L('跳过并直接发送', 'Skip and send as-is'), props.onSkip, 'primary',
                 L('不再等解释层，按原文发出', 'Do not wait for the explainer; send as-is')),
               btn({ 'data-po06': 'intercept-cancel' }, L('取消发送', 'Cancel send'), props.onCancel, 'ghost',
-                L('取消这条消息；它不会进入工作模型，也不会回填输入框草稿',
+                L('取消这条消息；它不会进入工作模型，也不会保留为输入框草稿',
                   'Cancel this message; it will not enter the working model and will not be restored to the composer')),
             ])
 
