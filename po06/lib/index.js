@@ -1207,15 +1207,21 @@ async function runInterceptInput(ctx, payload) {
   const text = String((payload && payload.text) || '')
   if (!sid) return { ok: false, reason: 'session-required' }
   if (!text.trim()) return { ok: false, reason: 'empty-text' }
-  const agent = adapter.agentFor(sid)
+  // agent/pre-step 已经拿到确切 live Agent，优先直接使用；注册表查询只作兼容兜底。
+  const agent = (payload && payload.agent) || adapter.agentFor(sid)
   const session = agent && (agent.session || (typeof agent.getSession === 'function' ? agent.getSession() : null))
   if (!session) return { ok: false, reason: 'session-not-found' }
-  // ⚠ **这里必须自己造一个 messageId**：拦下的消息此刻还不存在于宿主（这正是"前置"的含义），
-  // 而 pipeline 的 `commitUserInput` 要求非空 id（真机台账抓到的失败就是
-  // `threw:recordUserInput: messageId required`，见 2026-09-21 的 intercept 记录）。
+  // pre-step 的正常路径直接沿用 DSH 已识别的 MessageId；仅给旧手工 /interpret 兼容路径造兜底 id。
   const messageId = (payload && payload.messageId) ? String(payload.messageId) : ('po06-intercept-' + Date.now().toString(36))
   const t0 = Date.now()
   const trigger = String((payload && payload.trigger) || 'intercept')
+  const signal = (payload && payload.signal) || null
+  const aborted = () => Boolean(signal && signal.aborted)
+  const abortResult = (stage) => {
+    progressSet(sid, { stage: 'aborted', startedAt: t0, reason: stage })
+    appendWireLog({ sessionId: sid, trigger, ok: false, reason: 'aborted:' + stage, ms: Date.now() - t0 })
+    return { ok: false, reason: 'aborted' }
+  }
   // ── 三道**只有前置路径才等得起**的准备（真机台账逐条照出来的失败原因）──────────
   // 旧写法直接跑 pipeline，于是三条路都白跑：
   //   `gate-disabled`（启用判定是**异步且懒**的，第一次拦截时还在"判定中"，保守方向=不启用）
@@ -1229,12 +1235,12 @@ async function runInterceptInput(ctx, payload) {
     usage: null })
   let gate = PENDING
   try { gate = await awaitGateDecision(sid, 25000) } catch { /* 拿不到就按保守方向，下面如实记 */ }
+  if (aborted()) return abortResult('gate')
   progressSet(sid, { stage: 'model', startedAt: t0 })
   let route = { ok: true, source: 'observed' }
   try { route = await ensureModelRoute(ctx, sid) } catch (e) { route = { ok: false, reason: String((e && e.message) || e) } }
+  if (aborted()) return abortResult('model-route')
   progressSet(sid, { stage: 'interpret', startedAt: t0, text: '', reasoning: '' })
-  const signal = (payload && payload.signal) || null
-  const aborted = () => Boolean(signal && signal.aborted)
   try {
     await runProductionInput(ctx, session, { text, messageId, signal }, {
       trigger,
