@@ -679,19 +679,6 @@ export function ledgerContextFields({ policy, cx } = {}) {
 }
 
 /**
- * 把生产工作**推迟出事件派发窗口**再跑。
- *
- * 为什么必须这样做（真机实测，EV-0080）：宿主在派发会话事件时，该事件**正在被发布**
- * （append 未结束）。此时任何 `session.append` 都会被拒绝：
- *   `session append cannot reenter while another append is being published`
- * 我们这条链的第一步（初始化状态 / 记录输入 / 推进轮次）就是 append，
- * 所以**同步执行必然失败**——而且失败得很安静（只在台账里留一行 throw）。
- * 推迟到下一个宏任务即可：包不受影响（本来也只从第 2 步起生效）。
- */
-function defer(fn) {
-  try { setTimeout(() => { try { void fn() } catch { /* 台账已记 */ } }, 0) } catch { /* best effort */ }
-}
-/**
  * 把 usage 拆成**输入 / 输出 / 缓存命中 / 合计**（各家字段名不一，全部认一遍）。
  * 取不到的项回 null —— 界面显示 `—`，**不做估算**（用户 2026-09-21："尽可能不要用估算"）。
  */
@@ -870,8 +857,9 @@ export async function plainDrain(makeStream, t0, sink = null) {
 /**
  * **生产触发**（A15）：一次真实用户输入 → 解释 → reducer → 编译 → 写上下文。
  *
- * 零延迟：调用方**不 await** 本函数。所以包从**第 2 步**起才在上下文里
- * （用户显式选择；见 wire.js 顶部说明）。任何失败都只记台账，不抛回会话。
+ * 现在由 `agent/pre-step` **await** 本函数：包会在当前 step 的 systemPrompt/context
+ * 装配前就绪。旧的 session/event fire-and-forget / “第 2 步补跑”路径已经删除。
+ * 任何失败都转成可归因结果，由 pre-step 决定 fail-open 或等待审查，不重放消息。
  */
 async function runProductionInput(ctx, session, message, { trigger = 'user-message', gate = null, route = null, onDelta = null } = {}) {
   const sid = session && session.id !== undefined ? String(session.id) : ''
