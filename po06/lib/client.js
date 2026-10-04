@@ -1556,9 +1556,9 @@ window.__ModuleLoader__.load({
           btn({ 'data-po06': 'intercept-original' }, L('按原文发出', 'Send as-is'), props.onOriginal, 'ghost',
             L('这一轮不注入优化包，按你的原文发出（0.6 从不改写你的原话，能丢的只有包）',
               'Inject nothing this round and send your original text (0.6 never rewrites your words — only the packet can be dropped)')),
-          btn({ 'data-po06': 'intercept-cancel' }, L('取消', 'Cancel'), props.onCancel, 'ghost',
-            L('中止这一轮优化、什么都不发；草稿留在输入框里等你接着改（这才是 0.5 那颗「回退」干的事）',
-              'Abort this round and send nothing; your draft stays in the box (this is what 0.5\u2019s \u2039Back\u203a really did)')),
+          btn({ 'data-po06': 'intercept-cancel' }, L('取消发送', 'Cancel send'), props.onCancel, 'ghost',
+            L('取消这条已被 DSH 接收但尚未进入工作模型的消息；不会回填成输入框草稿',
+              'Cancel this message after DSH admission but before it enters the working model; it is not restored to the composer')),
           btn({ 'data-po06': 'intercept-confirm' }, L('确认提交', 'Confirm & send'), props.onConfirm, 'primary',
             L('把上面这份包作为本轮注入的内容，连同你的原文一起发出', 'Inject the packet above for this round, together with your original message')),
           btn({ 'data-po06': 'intercept-regen' }, L('重新生成', 'Regenerate'), props.onRegen, 'danger',
@@ -1600,9 +1600,9 @@ window.__ModuleLoader__.load({
             : footWrap('idle', [
               btn({ 'data-po06': 'intercept-skip' }, L('跳过并直接发送', 'Skip and send as-is'), props.onSkip, 'primary',
                 L('不再等解释层，按原文发出', 'Do not wait for the explainer; send as-is')),
-              btn({ 'data-po06': 'intercept-cancel' }, L('取消', 'Cancel'), props.onCancel, 'ghost',
-                L('中止这一轮优化、什么都不发；草稿留在输入框里（0.5 的「回退」就是这个）',
-                  'Abort this round and send nothing; the draft stays in the box (0.5\u2019s \u2039Back\u203a)')),
+              btn({ 'data-po06': 'intercept-cancel' }, L('取消发送', 'Cancel send'), props.onCancel, 'ghost',
+                L('取消这条消息；它不会进入工作模型，也不会回填输入框草稿',
+                  'Cancel this message; it will not enter the working model and will not be restored to the composer')),
             ])
 
       return h('div', {
