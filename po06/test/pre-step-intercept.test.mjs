@@ -176,6 +176,26 @@ test('重新生成停留在同一个已领取消息上，不创建第二次 subm
   controller.dispose()
 })
 
+test('外部设置变化会按原文释放正在等待的 review，不悬挂 Host step', async () => {
+  let packet = ''
+  const controller = createPreStepInterceptController({
+    readPolicy: () => ({ injectPacket: true, permission: 'review' }),
+    optimize: async () => {
+      packet = 'PACK'
+      return { ok: true, packet, chars: 4 }
+    },
+    getPacket: () => packet,
+    clearPacket: () => { packet = '' },
+  })
+  const decision = { kind: 'enter', messages: [user('settings change')] }
+  const pending = controller.handle(payload(), async () => decision)
+  await waitFor(() => controller.state('s1').run?.phase === 'review', 'settings review')
+  assert.equal(controller.release('s1', 'original', 'settings:session-changed'), true)
+  assert.strictEqual(await pending, decision)
+  assert.equal(packet, '')
+  controller.dispose()
+})
+
 test('downstream reject、插件上下文和 slash 普通消息都不启动优化', async () => {
   let calls = 0
   const controller = createPreStepInterceptController({
