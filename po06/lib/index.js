@@ -1236,6 +1236,18 @@ async function runInterceptInput(ctx, payload) {
   let gate = PENDING
   try { gate = await awaitGateDecision(sid, 25000) } catch { /* 拿不到就按保守方向，下面如实记 */ }
   if (aborted()) return abortResult('gate')
+  // Gate 没放行时直接结束。旧顺序会继续 ensureModelRoute()，它可能触发 llm.list*
+  // ——即使最终不解释，也已经做了不该发生的模型服务调用。
+  if (!gate || gate.enabled !== true) {
+    adapter.clearIntentText(sid, trigger + ':gate-disabled')
+    progressSet(sid, { stage: 'aborted', startedAt: t0, reason: 'gate:' + String((gate && gate.code) || 'disabled') })
+    appendWireLog({
+      sessionId: sid, messageId, chars: text.length, trigger, ok: false,
+      reason: 'gate-disabled', gate: gate && gate.code ? gate.code : null,
+      gateReason: gate && gate.reason ? gate.reason : null,
+    })
+    return { ok: false, reason: 'gate:' + String((gate && gate.code) || 'disabled'), gate: gate && gate.code ? gate.code : null }
+  }
   progressSet(sid, { stage: 'model', startedAt: t0 })
   let route = { ok: true, source: 'observed' }
   try { route = await ensureModelRoute(ctx, sid) } catch (e) { route = { ok: false, reason: String((e && e.message) || e) } }
@@ -2020,6 +2032,13 @@ export function apply(ctx, config) {
           return runInterceptInput(ctx, { ...p, trigger: 'pre-step' })
         },
         readPolicy: (sid) => readPolicy({ home: DSH_HOME, sessionId: sid }),
+        onBypass: ({ sessionId, text, messageId, reason, policy }) => {
+          appendWireLog({
+            sessionId, messageId, chars: String(text || '').length,
+            trigger: 'pre-step', ok: false, reason,
+            policy: policy ? { assist: policy.assist, detail: policy.detail, budget: policy.budget } : null,
+          })
+        },
         getPacket: (sid) => adapter.getIntentText(sid),
         setPacket: async (sid, text) => {
           try {
