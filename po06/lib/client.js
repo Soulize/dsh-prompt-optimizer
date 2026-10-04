@@ -44,9 +44,6 @@ window.__ModuleLoader__.load({
     // ⚠ `L` 在**渲染时**求值（LOCALE 在 apply 里才被赋值），所以只能在函数体里调用它。
     let LOCALE = 'zh'
     const L = (zh, en) => (LOCALE === 'en' && en ? en : zh)
-    // P11：发送按钮的本地化标签要从宿主的字典取（0.5:503 `localeService.bind("conversation")`）；
-    // 拿不到就只有结构兜底（卡片内最后一个按钮），**不会因此不拦**。
-    let LOCALE_BIND = null
     // 从 DSH 的 locale 服务里读出**当前语言**。
     // ⚠ 真机契约（照抄自宿主源码，别猜形状）：DSH 客户端 `dsh-client-locale/lib/client.js:1374`
     //   `ctx.provide("locale", locale)`，提供的是 **LocaleFace 实例**（不是字符串！）：
@@ -2267,7 +2264,7 @@ window.__ModuleLoader__.load({
         // 控件栏分两层：第一行放"设定类"，第二行放"范围类"。
         // 外层靠上对齐（**不要**用 alignSelf:'flex-end'，那会被输入区的发送按钮顶上去、底部留空）。
         h('div', { ...themeAttrs(), 'data-po06': 'bar', ref: rootRef,
-          // 真机诊断：1 表示当前有会话、Host pre-step 路径可被使用；不再表示 inputActions/DOM 劫持。
+          // 真机诊断：1 表示当前有会话、Host pre-step 路径可被使用；不再表示浏览器提交劫持。
           'data-po06-actions': canArm ? '1' : '0',
           'data-po06-intercepts': String(interceptCount),
           // 正在拦截 ⇒ 状态灯呼吸（见注入样式里那条 `[data-po06="bar"][data-po06-busy="1"]` 规则）。
@@ -2942,17 +2939,6 @@ window.__ModuleLoader__.load({
       }
       LOCALE_SVC = readSvc(ctx, 'locale')        // 语言服务的实例（LocaleFace），订阅它才能"切了就换"
       LOCALE = detectLocale(ctx)                 // 文案语言：读不到 ⇒ 中文
-      // P11：发送按钮的本地化标签（0.5 走 `localeService.bind("conversation")`）。
-      // 拿不到字典也不影响拦截——点击路径还有"卡片内最后一个按钮"的结构兜底。
-      LOCALE_BIND = (ns) => {
-        try {
-          const svc = readSvc(ctx, 'locale')
-          if (!svc) return null
-          if (typeof svc.bind === 'function') return svc.bind(ns)
-          if (typeof svc.t === 'function') return (k) => svc.t(ns ? ns + '.' + k : k)
-        } catch { /* 字典不可用 */ }
-        return null
-      }
       const disposers = []
       const own = (fn) => { if (typeof fn === 'function') disposers.push(fn); return fn }
 
