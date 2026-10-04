@@ -2681,17 +2681,6 @@ window.__ModuleLoader__.load({
       if (!match) return ''
       try { return JSON.parse('"' + match[1] + '"') } catch { return '' }
     }
-    /**
-     * 斜杠命令是否放行（纯函数，便于单测）：
-     * `active` 是**宿主确认已注册**的命令名清单——配置里列了但当前没注册的不会出现在这里。
-     * 判定要求命令名后紧跟空白或行尾，避免 `/vmakefoo` 被当成 `/vmake`。
-     */
-    function slashReviewAllowed(active, draft) {
-      const set = new Set((Array.isArray(active) ? active : []).map((n) => String(n == null ? '' : n).toLowerCase()).filter(Boolean))
-      if (!set.size) return false
-      const m = /^\/([A-Za-z0-9][A-Za-z0-9_-]*)(\s|$)/.exec(String(draft == null ? '' : draft))
-      return !!(m && set.has(m[1].toLowerCase()))
-    }
     function AdvisorStageCard({ stageState, stagePassed }) {
       const state = stageState
       const stage = state && state.stage && state.stage.id ? state.stage : null
@@ -3301,7 +3290,7 @@ const react = require("react")
         locale: () => LOCALE,
         detectLocale,
         // 主题调色板（单测拿它算对比度：浅色模式"看不清"这类问题要能被机器挡住，不能只靠肉眼）
-        InterceptPanel, InterceptDraftBody, interceptDraftOutput, advisorValueOf, advisorArgsOf, advisorDraftReply, advisorProgressPct, AdvisorToolRow, AdvisorMaterials, useAdvisorRun, slashReviewAllowed, usageText, normalizeUsage,
+        InterceptPanel, InterceptDraftBody, interceptDraftOutput, advisorValueOf, advisorArgsOf, advisorDraftReply, advisorProgressPct, AdvisorToolRow, AdvisorMaterials, useAdvisorRun, usageText, normalizeUsage,
         overlayZIndex: OV_Z,
         composerRegion, clampOvPos, clampOvSize, defaultOvPos, defaultBallPos,
         ovReflowWatch, ovReflowAll, EDITABLE_SEL,
